@@ -394,10 +394,12 @@ public class NettyCommTest extends AbstractCorfuTest {
 
         if (replaceClientTrust) {
             Files.copy(clientTrustWithServer.toPath(), clientTrustFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
+            //force reload to kick in
+            clientTrustFile.setLastModified(0);
         } else {
             Files.copy(serverTrustWithClient.toPath(), serverTrustFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
+            serverTrustFile.setLastModified(0);
         }
-
 
         clientRouter.start();
         assertThat(clientRouter.getClient(BaseClient.class).pingSync()).isTrue();

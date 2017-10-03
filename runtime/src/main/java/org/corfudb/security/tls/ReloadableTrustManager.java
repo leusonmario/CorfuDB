@@ -44,6 +44,8 @@ public class ReloadableTrustManager implements X509TrustManager {
             try {
                 if (reloadTrustManager()) {
                     trustManager.checkClientTrusted(chain, authType);
+                } else {
+                    throw cx;
                 }
             } catch (SSLException e) {
                 String message = "Issue occurred while rereading trust store.";
@@ -61,6 +63,8 @@ public class ReloadableTrustManager implements X509TrustManager {
             try {
                 if (reloadTrustManager()) {
                     trustManager.checkServerTrusted(chain, authType);
+                } else {
+                    throw cx;
                 }
             } catch (SSLException e) {
                 String message = "Issue occurred while rereading trust store.";

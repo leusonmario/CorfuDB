@@ -32,7 +32,6 @@ public class ManagementWorkflowSteps {
         ADD_NODE(addNode()),
         // For a bounded segment, catchup all nodes in each stripe to have identical log state.
         SEGMENT_CATCHUP(segmentCatchup()),
-
         SEGMENT_REPLICATION(segmentReplication()),
         MERGE_SEGMENT(mergeSegment());
 

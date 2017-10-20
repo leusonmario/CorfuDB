@@ -347,6 +347,13 @@ public class ManagementServer extends AbstractServer {
         }
     }
 
+    @ServerHandler(type = CorfuMsgType.WORKFLOW_MSG, opTimer = metricsPrefix + "save-workflow")
+    public void saveWorkflow(CorfuPayloadMsg<String> msg, ChannelHandlerContext ctx,
+                             IServerRouter r, boolean isMetricsEnabled) {
+
+        serverContext.getDataStore().put(String.class, "WORKFLOW", "TEST", msg.getPayload());
+    }
+
     /**
      * Adds a new node to the layout.
      *

@@ -3,7 +3,9 @@ package org.corfudb.workflow;
 import com.google.common.collect.ImmutableList;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
@@ -15,6 +17,8 @@ import lombok.Getter;
 import lombok.NonNull;
 import lombok.experimental.Accessors;
 import lombok.extern.slf4j.Slf4j;
+
+import org.corfudb.util.JsonUtils;
 
 /**
  * Workflow comprises of a series of atomic steps which on sequential execution delivers
@@ -137,5 +141,15 @@ public class Workflow {
         public Workflow build() {
             return new Workflow(this);
         }
+    }
+
+    public String getSaveFormat() {
+        Map<String, String> map = new HashMap<>();
+        map.put("uuid", workflowId.toString());
+        map.put("status", workflowId.toString());
+        List<String> steps = new ArrayList<>();
+        workflow.forEach(step -> steps.add(step.getSaveFormat()));
+        map.put("steps", JsonUtils.parser.toJson(steps));
+        return JsonUtils.parser.toJson(map);
     }
 }

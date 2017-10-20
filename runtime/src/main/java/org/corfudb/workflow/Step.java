@@ -1,9 +1,12 @@
 package org.corfudb.workflow;
 
+import java.util.HashMap;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.Function;
 
+import org.corfudb.util.JsonUtils;
 import lombok.Getter;
 
 /**
@@ -74,5 +77,13 @@ public class Step<T, R> {
             future.completeExceptionally(e);
         }
         return future;
+    }
+
+    public String getSaveFormat() {
+        Map<String, String> map = new HashMap<>();
+        map.put("name", name);
+        map.put("parameters", JsonUtils.parser.toJson(parameters));
+        map.put("timeout", String.valueOf(timeout));
+        return JsonUtils.parser.toJson(map);
     }
 }

@@ -91,6 +91,7 @@ public enum CorfuMsgType {
     ADD_NODE_REQUEST(77, new TypeToken<CorfuPayloadMsg<AddNodeRequest>>() {}),
     MERGE_SEGMENTS_REQUEST(78, TypeToken.of(CorfuMsg.class)),
 
+    WORKFLOW_MSG(80, new TypeToken<CorfuPayloadMsg<String>>(){}, true),
     KNOWN_ADDRESS_REQUEST(81, new TypeToken<CorfuPayloadMsg<KnownAddressSetRequest>>() {}),
     KNOWN_ADDRESS_RESPONSE(82, new TypeToken<CorfuPayloadMsg<KnownAddressSetResponse>>() {}),
     RAW_DATA_REQUEST(83, new TypeToken<CorfuPayloadMsg<RawDataRequest>>(){}),

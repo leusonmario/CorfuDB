@@ -29,6 +29,8 @@ import org.corfudb.protocols.wireprotocol.IMetadata;
 import org.corfudb.protocols.wireprotocol.KnownAddressSetRequest;
 import org.corfudb.protocols.wireprotocol.KnownAddressSetResponse;
 import org.corfudb.protocols.wireprotocol.MultipleReadRequest;
+import org.corfudb.protocols.wireprotocol.RawDataRequest;
+import org.corfudb.protocols.wireprotocol.RawDataMsg;
 import org.corfudb.protocols.wireprotocol.ReadRequest;
 import org.corfudb.protocols.wireprotocol.ReadResponse;
 import org.corfudb.protocols.wireprotocol.TrimRequest;
@@ -257,6 +259,12 @@ public class LogUnitClient implements IClient {
         return msg.getPayload().getKnownAddresses();
     }
 
+    @ClientHandler(type = CorfuMsgType.RAW_DATA_RESPONSE)
+    private static Object handleRawDataResponse(CorfuPayloadMsg<RawDataMsg> msg,
+                                                ChannelHandlerContext ctx, IClientRouter r) {
+        return msg.getPayload();
+    }
+
     /**
      * Asynchronously write to the logging unit.
      *
@@ -477,5 +485,28 @@ public class LogUnitClient implements IClient {
     public CompletableFuture<Set<Long>> requestKnownAddressSet(long startAddress, long endAddress) {
         return router.sendMessageAndGetCompletable(CorfuMsgType.KNOWN_ADDRESS_REQUEST.payloadMsg(
                 new KnownAddressSetRequest(startAddress, endAddress)));
+    }
+
+    /**
+     * Request for the raw lg entries in the given address range.
+     *
+     * @param startAddress Start of range address.
+     * @param endAddress   End of range address.
+     * @return RawDataMsg on success which contains map of addresses to log entries byte arrays.
+     */
+    public CompletableFuture<RawDataMsg> requestRawData(long startAddress, long endAddress) {
+        return router.sendMessageAndGetCompletable(CorfuMsgType.RAW_DATA_REQUEST.payloadMsg(
+                new RawDataRequest(startAddress, endAddress)));
+    }
+
+    /**
+     * Sends a request to replicate the addresses for the given rawDataMsg
+     *
+     * @param rawDataMsg RawDataMsg received from the log unit server.
+     * @return Completable future which returns true on success.
+     */
+    public CompletableFuture<Boolean> replicateRawData(RawDataMsg rawDataMsg) {
+        return router.sendMessageAndGetCompletable(CorfuMsgType.RAW_DATA_REPLICATE
+                .payloadMsg(rawDataMsg));
     }
 }

@@ -13,6 +13,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.corfudb.recovery.FastObjectLoader;
 import org.corfudb.runtime.CorfuRuntime;
 import org.corfudb.runtime.clients.LogUnitClient;
+import org.corfudb.runtime.exceptions.LayoutModificationException;
 import org.corfudb.runtime.exceptions.OutrankedException;
 import org.corfudb.runtime.exceptions.QuorumUnreachableException;
 import org.corfudb.runtime.exceptions.RecoveryException;
@@ -90,6 +91,41 @@ public class FailureHandlerDispatcher {
             reconfigureSequencerServers(corfuRuntime, currentLayout, newLayout, true);
         } catch (InterruptedException | ExecutionException e) {
             log.error("Bootstrapping sequencer failed due to exception : ", e);
+        }
+
+        return true;
+    }
+
+    /**
+     * Attempts to merge the last 2 segments.
+     *
+     * @param currentLayout Current layout
+     * @param corfuRuntime  Connected instance of the corfu runtime.
+     * @return True if merge successful, else False.
+     * @throws CloneNotSupportedException  if layout clne fails.
+     * @throws QuorumUnreachableException  if seal or consensus could not be achieved.
+     * @throws LayoutModificationException if merge not possible in layout.
+     * @throws OutrankedException          if consensus is outranked.
+     */
+    public boolean mergeSegments(Layout currentLayout, CorfuRuntime corfuRuntime)
+            throws CloneNotSupportedException, QuorumUnreachableException,
+            LayoutModificationException, OutrankedException {
+
+        currentLayout.setRuntime(corfuRuntime);
+        sealEpoch(currentLayout);
+
+        LayoutWorkflowManager layoutWorkflowManager = new LayoutWorkflowManager(currentLayout);
+        Layout newLayout = layoutWorkflowManager
+                .mergePreviousSegment(currentLayout.getSegments().size() - 1)
+                .build();
+        newLayout.setRuntime(corfuRuntime);
+
+        attemptConsensus(newLayout, corfuRuntime);
+
+        try {
+            reconfigureSequencerServers(corfuRuntime, currentLayout, newLayout, true);
+        } catch (InterruptedException | ExecutionException e) {
+            log.error("mergeSegments: Bootstrapping sequencer failed due to exception : ", e);
         }
 
         return true;

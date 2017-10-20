@@ -6,9 +6,11 @@ import com.github.benmanes.caffeine.cache.LoadingCache;
 import com.github.benmanes.caffeine.cache.RemovalCause;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.util.concurrent.ThreadFactoryBuilder;
+import com.google.protobuf.InvalidProtocolBufferException;
 
 import io.netty.channel.ChannelHandlerContext;
 
+import java.io.IOException;
 import java.lang.invoke.MethodHandles;
 import java.util.Map;
 import java.util.concurrent.Executors;
@@ -19,6 +21,7 @@ import java.util.concurrent.TimeUnit;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 
+import org.corfudb.format.Types;
 import org.corfudb.infrastructure.log.InMemoryStreamLog;
 import org.corfudb.infrastructure.log.StreamLog;
 import org.corfudb.infrastructure.log.StreamLogFiles;
@@ -29,6 +32,8 @@ import org.corfudb.protocols.wireprotocol.ILogData;
 import org.corfudb.protocols.wireprotocol.KnownAddressSetRequest;
 import org.corfudb.protocols.wireprotocol.LogData;
 import org.corfudb.protocols.wireprotocol.MultipleReadRequest;
+import org.corfudb.protocols.wireprotocol.RawDataMsg;
+import org.corfudb.protocols.wireprotocol.RawDataRequest;
 import org.corfudb.protocols.wireprotocol.ReadRequest;
 import org.corfudb.protocols.wireprotocol.ReadResponse;
 import org.corfudb.protocols.wireprotocol.TrimRequest;
@@ -284,6 +289,46 @@ public class LogUnitServer extends AbstractServer {
             log.error("Encountered error while flushing cache {}", e);
         }
         r.sendResponse(ctx, msg, CorfuMsgType.ACK.msg());
+    }
+
+    /**
+     *  Handles requests for raw LogEntries for the specified address range.
+     */
+    @ServerHandler(type = CorfuMsgType.RAW_DATA_REQUEST, opTimer = metricsPrefix + "raw-data-req")
+    private void rawDataRequest(CorfuPayloadMsg<RawDataRequest> msg, ChannelHandlerContext ctx,
+                                IServerRouter r, boolean isMetricsEnabled) {
+        long startAddress = msg.getPayload().getStartAddress();
+        long endAddress = msg.getPayload().getEndAddress();
+
+        try {
+            Map<Long, byte[]> rawDataSet = ((StreamLogFiles) streamLog)
+                    .getRawLogEntries(startAddress, endAddress);
+            r.sendResponse(ctx, msg, CorfuMsgType.RAW_DATA_RESPONSE
+                    .payloadMsg(new RawDataMsg(rawDataSet)));
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
+
+    /**
+     * Handles requests for replicating
+     */
+    @ServerHandler(type = CorfuMsgType.RAW_DATA_REPLICATE, opTimer = metricsPrefix + "replicate")
+    private void replicateRawData(CorfuPayloadMsg<RawDataMsg> msg,
+                                  ChannelHandlerContext ctx, IServerRouter r,
+                                  boolean isMetricsEnabled) {
+        Map<Long, byte[]> rawDataMap = msg.getPayload().getRawDataMap();
+        for (Long address : rawDataMap.keySet()) {
+            try {
+                // bypass the cache.
+                batchWriter.write(address, ((StreamLogFiles) streamLog)
+                        .getLogData(Types.LogEntry.parseFrom(rawDataMap.get(address))));
+            } catch (InvalidProtocolBufferException e) {
+                r.sendResponse(ctx, msg, CorfuMsgType.ERROR_DATA_CORRUPTION.msg());
+                return;
+            }
+        }
+        r.sendResponse(ctx, msg, CorfuMsgType.WRITE_OK.msg());
     }
 
     /**

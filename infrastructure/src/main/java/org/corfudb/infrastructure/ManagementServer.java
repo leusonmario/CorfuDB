@@ -7,7 +7,10 @@ import io.netty.channel.ChannelHandlerContext;
 import java.lang.invoke.MethodHandles;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executors;
@@ -106,6 +109,7 @@ public class ManagementServer extends AbstractServer {
 
     /**
      * Returns new ManagementServer.
+     *
      * @param serverContext context object providing parameters and objects
      */
     public ManagementServer(ServerContext serverContext) {
@@ -393,6 +397,74 @@ public class ManagementServer extends AbstractServer {
             return;
         }
         r.sendResponse(ctx, msg, new CorfuMsg(CorfuMsgType.ACK));
+    }
+
+    /**
+     * Merging the segments. Replicates data if required.
+     *
+     * @param msg corfu message containing MERGE_SEGMENTS_REQUEST
+     * @param ctx netty ChannelHandlerContext
+     * @param r   server router
+     */
+    @ServerHandler(type = CorfuMsgType.MERGE_SEGMENTS_REQUEST, opTimer = metricsPrefix
+            + "merge-segments")
+    public void handleMergeSegmentRequest(CorfuMsg msg,
+                                          ChannelHandlerContext ctx,
+                                          IServerRouter r, boolean isMetricsEnabled) {
+        if (isShutdown()) {
+            log.warn("Management Server received {} but is shutdown.", msg.getMsgType().toString());
+            r.sendResponse(ctx, msg, CorfuMsgType.NACK.msg());
+            return;
+        }
+        // This server has not been bootstrapped yet, ignore all requests.
+        if (!checkBootstrap(msg, ctx, r)) {
+            return;
+        }
+
+        List<LayoutSegment> segmentList = latestLayout.getSegments();
+        if (segmentList.size() < 2) {
+            log.info("handleMergeSegmentRequest: Not enough segments to merge.");
+            return;
+        }
+
+        int collapsingSegmentIndex = segmentList.size() - 1;
+        LayoutSegment collapsingSegment = segmentList.get(collapsingSegmentIndex);
+        int oldSegmentIndex = segmentList.size() - 2;
+        LayoutSegment oldSegment = segmentList.get(oldSegmentIndex);
+
+        Set<String> newNodes = new HashSet<>();
+        collapsingSegment.getStripes().forEach(
+                layoutStripe -> newNodes.addAll(layoutStripe.getLogServers()));
+        oldSegment.getStripes().forEach(
+                layoutStripe -> newNodes.removeAll(layoutStripe.getLogServers()));
+
+        final String[] recoveringNode = newNodes.toArray(new String[newNodes.size()]);
+        // TODO: Support addition of all new nodes
+        if (newNodes.size() != 1) {
+            log.warn("handleMergeSegmentRequest: Cannot merge segments with multiple new nodes: {}",
+                    newNodes);
+            return;
+        }
+
+        ManagementWorkflowSteps.corfuRuntime = getCorfuRuntime();
+        Map<String, String> params = new HashMap<>();
+        params.put("segment", Layout.getParser().toJson(oldSegment));
+        params.put("newEndpoint", recoveringNode[0]);
+
+        newNodes.forEach(s -> recoveringNode[0] = s);
+
+        Workflow workflow = new Workflow.WorkflowBuilder()
+                // Segment catchup by selective hole filling.
+                .addStep(ManagementSteps.SEGMENT_CATCHUP.getStep().setParameters(params))
+                // Segment Replication.
+                .addStep(ManagementSteps.SEGMENT_REPLICATION.getStep().setParameters(params))
+                // Trigger segment merge.
+                .addStep(ManagementSteps.MERGE_SEGMENT.getStep().setParameters(params))
+                .build();
+
+        workflow.executeAsync();
+
+        r.sendResponse(ctx, msg, CorfuMsgType.ACK.msg());
     }
 
     /**

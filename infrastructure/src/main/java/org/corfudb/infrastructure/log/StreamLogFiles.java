@@ -687,6 +687,51 @@ public class StreamLogFiles implements StreamLog, StreamLogWithRankedAddressSpac
     }
 
     /**
+     * Reads the log entries in the given range and returns a map of addresses to their log entries
+     * as raw byte arrays.
+     *
+     * @param startAddress Start of range address.
+     * @param endAddress End of range address.
+     * @return Map of addresses to log entry byte array.
+     * @throws IOException Thrown if error in opening file channel.
+     */
+    public Map<Long, byte[]> getRawLogEntries(long startAddress, long endAddress)
+            throws IOException {
+
+        final Map<Long, byte[]> logEntriesMap = new HashMap<>();
+
+        // Temporary file channel cache.
+        Map<String, FileChannel> tempFileChannels = new HashMap<>();
+        try {
+            for (long address = startAddress; address <= endAddress; address++) {
+                SegmentHandle sh = getSegmentHandleForAddress(address);
+                FileChannel fc = tempFileChannels.get(sh.fileName);
+                if (fc == null) {
+                    fc = getChannel(sh.fileName, true);
+                }
+                tempFileChannels.put(sh.fileName, fc);
+
+                AddressMetaData metaData = sh.getKnownAddresses().get(address);
+                if (metaData == null) {
+                    continue;
+                }
+
+                fc.position(metaData.offset);
+                ByteBuffer entryBuf = ByteBuffer.allocate(metaData.length);
+                fc.read(entryBuf);
+                logEntriesMap.put(address, entryBuf.array());
+            }
+        } finally {
+            for (FileChannel fc : tempFileChannels.values()) {
+                if (fc != null) {
+                    fc.close();
+                }
+            }
+        }
+        return logEntriesMap;
+    }
+
+    /**
      * Read a log entry in a file.
      *
      * @param sh      The file handle to use.

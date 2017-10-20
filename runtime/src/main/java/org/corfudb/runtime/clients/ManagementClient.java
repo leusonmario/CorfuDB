@@ -116,6 +116,14 @@ public class ManagementClient implements IClient {
     }
 
     /**
+     * Request to merge segments.
+     * @return Returns a completable future which returns true on successful workflow dispatch.
+     */
+    public CompletableFuture<Boolean> mergeSegmentsRequest() {
+        return router.sendMessageAndGetCompletable(CorfuMsgType.MERGE_SEGMENTS_REQUEST.msg());
+    }
+
+    /**
      * Requests for a heartbeat message containing the node status.
      *
      * @return A future which will return the node health metrics of

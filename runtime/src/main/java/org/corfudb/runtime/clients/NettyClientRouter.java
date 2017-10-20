@@ -19,6 +19,8 @@ import io.netty.channel.socket.SocketChannel;
 import io.netty.channel.socket.nio.NioSocketChannel;
 import io.netty.handler.codec.LengthFieldBasedFrameDecoder;
 import io.netty.handler.codec.LengthFieldPrepender;
+import io.netty.handler.codec.compression.Lz4FrameDecoder;
+import io.netty.handler.codec.compression.Lz4FrameEncoder;
 import io.netty.handler.ssl.SslContext;
 import io.netty.util.concurrent.DefaultEventExecutorGroup;
 import io.netty.util.concurrent.EventExecutorGroup;
@@ -393,6 +395,10 @@ public class NettyClientRouter extends SimpleChannelInboundHandler<CorfuMsg>
                     if (tlsEnabled) {
                         ch.pipeline().addLast("ssl", sslContext.newHandler(ch.alloc()));
                     }
+
+                    ch.pipeline().addLast(ee, new Lz4FrameEncoder());
+                    ch.pipeline().addLast(ee, new Lz4FrameDecoder());
+
                     ch.pipeline().addLast(new LengthFieldPrepender(4));
                     ch.pipeline().addLast(new LengthFieldBasedFrameDecoder(Integer.MAX_VALUE,
                             0, 4, 0,
@@ -403,6 +409,7 @@ public class NettyClientRouter extends SimpleChannelInboundHandler<CorfuMsg>
                                         saslPlainTextPasswordFile);
                         ch.pipeline().addLast("sasl/plain-text", saslNettyClient);
                     }
+
                     ch.pipeline().addLast(ee, new NettyCorfuMessageDecoder());
                     ch.pipeline().addLast(ee, new NettyCorfuMessageEncoder());
                     ch.pipeline().addLast(ee, router);

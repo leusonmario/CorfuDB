@@ -16,6 +16,8 @@ import io.netty.channel.socket.SocketChannel;
 import io.netty.channel.socket.nio.NioServerSocketChannel;
 import io.netty.handler.codec.LengthFieldBasedFrameDecoder;
 import io.netty.handler.codec.LengthFieldPrepender;
+import io.netty.handler.codec.compression.Lz4FrameDecoder;
+import io.netty.handler.codec.compression.Lz4FrameEncoder;
 import io.netty.handler.ssl.SslContext;
 import io.netty.handler.ssl.SslHandler;
 import io.netty.util.concurrent.DefaultEventExecutorGroup;
@@ -400,6 +402,10 @@ public class CorfuServer {
                                 }
                                 ch.pipeline().addLast("ssl", new SslHandler(engine));
                             }
+
+                            ch.pipeline().addLast(ee, new Lz4FrameEncoder());
+                            ch.pipeline().addLast(ee, new Lz4FrameDecoder());
+
                             ch.pipeline().addLast(new LengthFieldPrepender(4));
                             ch.pipeline().addLast(new LengthFieldBasedFrameDecoder(Integer
                                     .MAX_VALUE, 0, 4, 0, 4));

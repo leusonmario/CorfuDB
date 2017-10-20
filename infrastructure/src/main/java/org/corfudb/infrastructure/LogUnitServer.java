@@ -26,6 +26,7 @@ import org.corfudb.protocols.wireprotocol.CorfuMsg;
 import org.corfudb.protocols.wireprotocol.CorfuMsgType;
 import org.corfudb.protocols.wireprotocol.CorfuPayloadMsg;
 import org.corfudb.protocols.wireprotocol.ILogData;
+import org.corfudb.protocols.wireprotocol.KnownAddressSetRequest;
 import org.corfudb.protocols.wireprotocol.LogData;
 import org.corfudb.protocols.wireprotocol.MultipleReadRequest;
 import org.corfudb.protocols.wireprotocol.ReadRequest;
@@ -37,7 +38,6 @@ import org.corfudb.runtime.exceptions.DataOutrankedException;
 import org.corfudb.runtime.exceptions.OverwriteException;
 import org.corfudb.runtime.exceptions.TrimmedException;
 import org.corfudb.runtime.exceptions.ValueAdoptedException;
-import org.corfudb.util.MetricsUtils;
 import org.corfudb.util.Utils;
 
 
@@ -284,6 +284,20 @@ public class LogUnitServer extends AbstractServer {
             log.error("Encountered error while flushing cache {}", e);
         }
         r.sendResponse(ctx, msg, CorfuMsgType.ACK.msg());
+    }
+
+    /**
+     * Returns a set of all known addresses for the range provided by the start and end addresses.
+     */
+    @ServerHandler(type = CorfuMsgType.KNOWN_ADDRESS_REQUEST, opTimer = metricsPrefix
+            + "knownAddressRequest")
+    private void getKnownAddresses(CorfuPayloadMsg<KnownAddressSetRequest> msg,
+                                   ChannelHandlerContext ctx, IServerRouter r,
+                                   boolean isMetricsEnabled) {
+        KnownAddressSetRequest request = msg.getPayload();
+        r.sendResponse(ctx, msg, CorfuMsgType.KNOWN_ADDRESS_RESPONSE
+                .payloadMsg(streamLog.getKnownAddressesInRange(request.getStartAddress(),
+                        request.getEndAddress())));
     }
 
 

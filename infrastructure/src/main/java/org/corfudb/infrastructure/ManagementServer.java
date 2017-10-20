@@ -6,6 +6,7 @@ import io.netty.channel.ChannelHandlerContext;
 
 import java.lang.invoke.MethodHandles;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
@@ -19,6 +20,8 @@ import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 
 import org.corfudb.format.Types.NodeMetrics;
+import org.corfudb.infrastructure.ManagementWorkflowSteps.ManagementSteps;
+import org.corfudb.protocols.wireprotocol.AddNodeRequest;
 import org.corfudb.protocols.wireprotocol.CorfuMsg;
 import org.corfudb.protocols.wireprotocol.CorfuMsgType;
 import org.corfudb.protocols.wireprotocol.CorfuPayloadMsg;
@@ -27,6 +30,8 @@ import org.corfudb.runtime.CorfuRuntime;
 import org.corfudb.runtime.clients.ManagementClient;
 import org.corfudb.runtime.clients.SequencerClient;
 import org.corfudb.runtime.view.Layout;
+import org.corfudb.runtime.view.Layout.LayoutSegment;
+import org.corfudb.workflow.Workflow;
 
 /**
  * Instantiates and performs failure detection and handling asynchronously.
@@ -124,7 +129,7 @@ public class ManagementServer extends AbstractServer {
             Layout singleLayout = new Layout(
                     Collections.singletonList(localAddress),
                     Collections.singletonList(localAddress),
-                    Collections.singletonList(new Layout.LayoutSegment(
+                    Collections.singletonList(new LayoutSegment(
                             Layout.ReplicationMode.CHAIN_REPLICATION,
                             0L,
                             -1L,
@@ -336,6 +341,58 @@ public class ManagementServer extends AbstractServer {
             log.error("Failure Handler could not clone layout: {}", e);
             r.sendResponse(ctx, msg, new CorfuMsg(CorfuMsgType.NACK));
         }
+    }
+
+    /**
+     * Adds a new node to the layout.
+     *
+     * @param msg corfu message containing ADD_NODE_REQUEST
+     * @param ctx netty ChannelHandlerContext
+     * @param r   server router
+     */
+    @ServerHandler(type = CorfuMsgType.ADD_NODE_REQUEST, opTimer = metricsPrefix + "add-node")
+    public void handleAddNodeRequest(CorfuPayloadMsg<AddNodeRequest> msg,
+                                     ChannelHandlerContext ctx, IServerRouter r,
+                                     boolean isMetricsEnabled) {
+        if (isShutdown()) {
+            log.warn("Management Server received {} but is shutdown.", msg.getMsgType().toString());
+            r.sendResponse(ctx, msg, new CorfuMsg(CorfuMsgType.NACK));
+            return;
+        }
+        // This server has not been bootstrapped yet, ignore all requests.
+        if (!checkBootstrap(msg, ctx, r)) {
+            return;
+        }
+
+        log.info("Received add node request: {}", msg.getPayload());
+        AddNodeRequest addNodeRequest = msg.getPayload();
+
+        ManagementWorkflowSteps.corfuRuntime = getCorfuRuntime();
+        ManagementWorkflowSteps.failureHandlerDispatcher = failureHandlerDispatcher;
+
+        Map<String, String> params = new HashMap<>();
+        params.put("endpoint", msg.getPayload().getEndpoint());
+        params.put("isLayoutServer", Boolean.toString(addNodeRequest.isLayoutServer()));
+        params.put("isSequencerServer", Boolean.toString(addNodeRequest.isSequencerServer()));
+        params.put("isLogUnitServer", Boolean.toString(addNodeRequest.isLogUnitServer()));
+        params.put("isUnresponsiveServer", Boolean.toString(addNodeRequest.isUnresponsiveServer()));
+        params.put("logUnitStripeIndex", Integer.toString(addNodeRequest.getLogUnitStripeIndex()));
+
+        // Workflow in 2 steps.
+        Workflow workflow = new Workflow.WorkflowBuilder()
+                // Step 1. Bootstrap new node with existing layout.
+                .addStep(ManagementSteps.SET_UP_NODE.getStep().setParameters(params))
+                // Step 2. Add node to layout and split segment if required.
+                .addStep(ManagementSteps.ADD_NODE.getStep().setParameters(params))
+                .build();
+        try {
+            workflow.executeAsync().get();
+        } catch (InterruptedException | ExecutionException e) {
+            e.printStackTrace();
+            r.sendResponse(ctx, msg, new CorfuMsg(CorfuMsgType.NACK));
+            return;
+        }
+        r.sendResponse(ctx, msg, new CorfuMsg(CorfuMsgType.ACK));
     }
 
     /**

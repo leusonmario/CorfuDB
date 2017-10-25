@@ -3,6 +3,8 @@ package org.corfudb.runtime.clients;
 import com.google.common.collect.ImmutableSet;
 import org.corfudb.format.Types.NodeMetrics;
 import org.corfudb.infrastructure.*;
+import org.corfudb.protocols.wireprotocol.orchestrator.AddNodeRequest;
+import org.corfudb.protocols.wireprotocol.orchestrator.OrchestratorResponse;
 import org.junit.After;
 import org.junit.Test;
 
@@ -70,6 +72,12 @@ public class ManagementClientTest extends AbstractClientTest {
         assertThatThrownBy(() ->
                 client.bootstrapManagement(TestLayoutBuilder.single(SERVERS.PORT_0)).get())
                 .isInstanceOf(ExecutionException.class);
+    }
+
+    @Test
+    public void addNodeWorkflowRPCTest() throws Exception {
+            assertThat(client.addNodeRequest("localhost:9000").get())
+                    .isInstanceOf(OrchestratorResponse.class);
     }
 
     /**

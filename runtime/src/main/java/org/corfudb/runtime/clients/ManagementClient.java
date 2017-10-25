@@ -12,6 +12,8 @@ import org.corfudb.protocols.wireprotocol.CorfuMsg;
 import org.corfudb.protocols.wireprotocol.CorfuMsgType;
 import org.corfudb.protocols.wireprotocol.CorfuPayloadMsg;
 import org.corfudb.protocols.wireprotocol.FailureDetectorMsg;
+import org.corfudb.protocols.wireprotocol.OrchestratorRequest;
+import org.corfudb.protocols.wireprotocol.OrchestratorResponse;
 import org.corfudb.runtime.exceptions.AlreadyBootstrappedException;
 import org.corfudb.runtime.exceptions.NoBootstrapException;
 import org.corfudb.runtime.view.Layout;
@@ -30,7 +32,6 @@ public class ManagementClient implements IClient {
     @Getter
     IClientRouter router;
 
-
     /**
      * The handler and handlers which implement this client.
      */
@@ -38,6 +39,12 @@ public class ManagementClient implements IClient {
     public ClientMsgHandler msgHandler = new ClientMsgHandler(this)
             .generateHandlers(MethodHandles.lookup(), this);
 
+
+    @ClientHandler(type = CorfuMsgType.ORCHESTRATOR_RESPONSE)
+    private static Object handleOrchestratorResponse(CorfuPayloadMsg<OrchestratorResponse> msg,
+                                                  ChannelHandlerContext ctx, IClientRouter r) {
+        return msg.getPayload();
+    }
 
     @ClientHandler(type = CorfuMsgType.HEARTBEAT_RESPONSE)
     private static Object handleHeartbeatResponse(CorfuPayloadMsg<byte[]> msg,
@@ -100,5 +107,9 @@ public class ManagementClient implements IClient {
      */
     public CompletableFuture<byte[]> sendHeartbeatRequest() {
         return router.sendMessageAndGetCompletable(CorfuMsgType.HEARTBEAT_REQUEST.msg());
+    }
+
+    public CompletableFuture<OrchestratorResponse> runWorkFlow(OrchestratorRequest request) {
+        return router.sendMessageAndGetCompletable(CorfuMsgType.ORCHESTRATOR_REQUEST.payloadMsg(request));
     }
 }

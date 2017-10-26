@@ -5,7 +5,6 @@ import java.util.stream.Stream;
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
 
-import org.corfudb.runtime.object.ICorfuWrapper;
 import org.corfudb.runtime.object.IObjectManager;
 import org.corfudb.runtime.object.IStateMachineOp;
 import org.corfudb.runtime.object.IStateMachineStream;

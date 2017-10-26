@@ -17,10 +17,10 @@ public class WriteSet extends ConflictSet {
     final MultiObjectSMREntry writeSet = new MultiObjectSMREntry();
 
 
-    public <T> long add(IObjectManager<T> wrapper, SMREntry updateEntry, Object[] conflictObjects) {
-        super.add(wrapper, conflictObjects);
-        writeSet.addTo(wrapper.getId(), updateEntry);
-        return writeSet.getSMRUpdates(wrapper.getId()).size() - 1;
+    public <T> long add(IObjectManager<T> manager, SMREntry updateEntry, Object[] conflictObjects) {
+        super.add(manager, conflictObjects);
+        writeSet.addTo(manager.getId(), updateEntry);
+        return writeSet.getSMRUpdates(manager.getId()).size() - 1;
     }
 
 }

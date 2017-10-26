@@ -8,20 +8,40 @@ import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
 
 import org.corfudb.protocols.logprotocol.SMREntry;
-import org.corfudb.runtime.object.ICorfuWrapper;
 import org.corfudb.runtime.object.IObjectManager;
 import org.corfudb.runtime.object.IStateMachineOp;
 import org.corfudb.runtime.object.IStateMachineStream;
 import org.corfudb.runtime.view.Address;
 import org.corfudb.runtime.view.ObjectBuilder;
 
+/** An optimistic state machine stream which supports recording updates into the
+ *  write set of a transaction, and undoing those updates when syncing to
+ *  {@link org.corfudb.runtime.view.Address.OPTIMISTIC} is requested.
+ *
+ *  <p>Reads are redirected to the snapshot requested. This is done by the
+ *  {@link SnapshotStateMachineStream} this class extends from.
+ *
+ *  <p>This is an abstract class. {@link ReadAfterWriteStateMachineStream},
+ *  {@link WriteAfterWriteStateMachineStream} are concrete implementations that
+ *  record conflict information as needed as the stream is manipulated.
+ */
 public abstract class AbstractOptimisticStateMachineStream extends SnapshotStateMachineStream {
 
-
+    /** The pointer into the optimistic write set. */
     long optimisticPos = Address.NEVER_READ;
+
+    /** The manager for the object for the stream. */
     protected final IObjectManager<?> manager;
+
+    /** The transaction context of the writer. */
     final TransactionContext writerContext;
 
+    /** Construct a new {@link Class}.
+     *
+     * @param manager   The manager for the stream.
+     * @param parent    The parent stream.
+     * @param address   The address a snapshot will be obtained over.
+     */
     public AbstractOptimisticStateMachineStream(@Nonnull IObjectManager<?> manager,
                                                 @Nonnull IStateMachineStream parent,
                                                 long address) {
@@ -30,6 +50,7 @@ public abstract class AbstractOptimisticStateMachineStream extends SnapshotState
         this.writerContext = Transactions.getContext();
     }
 
+    /** {@inheritDoc} */
     @Nonnull
     @Override
     public Stream<IStateMachineOp> sync(long pos, @Nullable Object[] conflictObjects) {
@@ -73,6 +94,7 @@ public abstract class AbstractOptimisticStateMachineStream extends SnapshotState
                 .map(x -> (IStateMachineOp) x);
     }
 
+    /** {@inheritDoc} */
     @Override
     public long check() {
         long base = super.check();
@@ -85,6 +107,7 @@ public abstract class AbstractOptimisticStateMachineStream extends SnapshotState
         return Address.MAX;
     }
 
+    /** {@inheritDoc} */
     @Override
     public long append(String smrMethod, Object[] smrArguments,
                        Object[] conflictObjects, boolean keepEntry) {
@@ -93,7 +116,7 @@ public abstract class AbstractOptimisticStateMachineStream extends SnapshotState
         return Transactions.getContext().getWriteSet().add(manager, smrEntry, conflictObjects);
     }
 
-
+    /** {@inheritDoc} */
     @Override
     public IStateMachineOp consumeEntry(long address) {
         return Transactions.getContext().getWriteSet().getWriteSet()

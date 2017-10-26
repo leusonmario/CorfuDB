@@ -25,26 +25,23 @@ import org.corfudb.util.Utils;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 
-//TODO Discard TransactionStream for building maps but not for constructing tails
-
 /**
- * The VersionedObjectManager maintains a versioned object which is
- * backed by an IStateMachineStream, and is optionally backed by an additional
- * optimistic update stream.
+ * The VersionedObjectManager maintains a versioned state-machine object {@code object}.
+ * This object can time-travel and be optimistically updated.
  *
- * <p>Users of the VersionedObjectManager cannot access the versioned object
- * directly, rather they use the access() and update() methods to
- * read and manipulate the object.
+ * <p>To access object state, users call {@link #access(IStateMachineAccess, Object[])} with
+ * a function that is executed when the object is "sync'd". The definition of sync is context
+ * dependent. For example, if a transaction is active, it will depend on the type of transaction.
+ * Typically, the VersionedObjectManager is instantiated with a
+ * {@link LinearizableStateMachineStream}, which means that an access will reflect any updates
+ * added via the {@link #logUpdate(String, boolean, Object[], Object...)} operation ordered before
+ * it (in wall-clock time).
  *
- * <p>access() and update() allow the user to provide functions to execute
- * under locks. These functions execute various "unsafe" methods provided
- * by this object which inspect and manipulate the object state.
+ * <p>To modify an object, users call {@link #logUpdate(String, boolean, Object[], Object...)} with
+ * a proposed state machine update. This function returns an address, which can be used in a
+ * later call to {@link #getUpcallResult(long, Object[])}. This is used if the update returns a
+ * value.
  *
- * <p>syncObjectUnsafe() enables the user to bring the object to a given version,
- * and the VersionedObjectManager manages any sync or rollback of updates
- * necessary.
- *
- * <p>Created by mwei on 11/13/16.
  */
 @Slf4j
 public class VersionedObjectManager<T> implements IObjectManager<T> {
@@ -72,35 +69,24 @@ public class VersionedObjectManager<T> implements IObjectManager<T> {
     @Getter
     private final ICorfuWrapper<T> wrapper;
 
+    /** The builder for the object.
+     *
+     */
     @Getter
     private final ObjectBuilder<T> builder;
 
     /**
-     * The VersionedObjectManager maintains a versioned object which is backed by an IStateMachineStream,
-     * and is optionally backed by an additional optimistic update stream.
-     *
-     * @param smrStream         Stream View backing this object.
-     * @param wrapper           The wrapper for this object.
+     * Construct a new versioned object manager with the given stream, wrapper and builder.
      */
-    public VersionedObjectManager(LinearizableStateMachineStream smrStream,
+    public VersionedObjectManager(IStateMachineStream smrStream,
                                   ICorfuWrapper<T> wrapper,
                                   ObjectBuilder<T> builder) {
         this.builder = builder;
-
         this.smrStream = smrStream;
-
         this.wrapper = wrapper;
-
         this.object = builder.getRawInstance();
 
         lock = new StampedLock();
-    }
-
-
-    private @Nonnull IStateMachineStream getActiveStream() {
-        return Transactions.active()
-                ? Transactions.current().getStateMachineStream(this, smrStream.getRoot())
-                : smrStream.getRoot();
     }
 
     /**
@@ -125,13 +111,18 @@ public class VersionedObjectManager<T> implements IObjectManager<T> {
             try {
                 IStateMachineStream stream = getActiveStream();
                 IStateMachineOp entry = stream.consumeEntry(address);
-                if (entry == null  || !entry.isUpcallResultPresent()) {
+
+                // If there is no upcall present, we must obtain it (via syncing).
+                if (!entry.isUpcallResultPresent()) {
+                    // If the object is write-locked, this means some other thread is syncing
+                    // the object forward. This might have our update, so we take a read-lock
+                    // instead of a write lock in this case.
                     if (lock.isWriteLocked()) {
                         // Perhaps the last writer calculated the upcall for us
                         ts = lock.readLock();
                         try {
                             entry = stream.consumeEntry(address);
-                            if (entry != null && entry.isUpcallResultPresent()) {
+                            if (entry.isUpcallResultPresent()) {
                                 return (R) entry.getUpcallResult();
                             }
                         } finally {
@@ -149,7 +140,7 @@ public class VersionedObjectManager<T> implements IObjectManager<T> {
                     }
                 }
 
-                if (entry != null && entry.isUpcallResultPresent()) {
+                if (entry.isUpcallResultPresent()) {
                     return (R) entry.getUpcallResult();
                 }
                 throw new RuntimeException("Attempted to get the result "
@@ -460,5 +451,12 @@ public class VersionedObjectManager<T> implements IObjectManager<T> {
         } finally {
             lock.unlock(ts);
         }
+    }
+
+
+    private @Nonnull IStateMachineStream getActiveStream() {
+        return Transactions.active()
+                ? Transactions.current().getStateMachineStream(this, smrStream.getRoot())
+                : smrStream.getRoot();
     }
 }

@@ -1,10 +1,6 @@
 package org.corfudb.runtime.object.transactions;
 
-import java.util.UUID;
-
-import org.corfudb.runtime.object.ICorfuWrapper;
 import org.corfudb.runtime.object.IObjectManager;
-import org.corfudb.runtime.object.IStateMachineAccess;
 import org.corfudb.runtime.object.IStateMachineStream;
 
 public class ReadAfterWriteTransaction

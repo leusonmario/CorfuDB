@@ -1,14 +1,10 @@
 package org.corfudb.runtime.object.transactions;
 
-import java.util.Deque;
-import java.util.LinkedList;
 import java.util.UUID;
 
 import org.corfudb.protocols.wireprotocol.TxResolutionInfo;
 import org.corfudb.runtime.exceptions.AbortCause;
 import org.corfudb.runtime.exceptions.TransactionAbortedException;
-import org.corfudb.runtime.object.ICorfuWrapper;
-import org.corfudb.runtime.object.IStateMachineStream;
 import org.corfudb.runtime.view.Address;
 
 import lombok.extern.slf4j.Slf4j;

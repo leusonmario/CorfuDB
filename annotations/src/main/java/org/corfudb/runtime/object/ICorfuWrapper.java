@@ -53,11 +53,4 @@ public interface ICorfuWrapper<T> {
      * @return An object manager for this wrapper.
      */
     IObjectManager<T> getObjectManager$CORFU();
-
-    /** Get a state machine engine.
-     * @return
-     * */
-    default IStateMachineEngine getEngine$CORFU() {
-        return getObjectManager$CORFU().getEngine();
-    }
 }

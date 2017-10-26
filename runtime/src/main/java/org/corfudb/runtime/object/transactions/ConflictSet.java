@@ -10,6 +10,7 @@ import java.util.UUID;
 import java.util.stream.Collectors;
 
 import org.corfudb.runtime.object.ICorfuWrapper;
+import org.corfudb.runtime.object.IObjectManager;
 import org.corfudb.runtime.view.ObjectBuilder;
 
 import lombok.Getter;
@@ -23,16 +24,16 @@ public class ConflictSet {
 
 
     /** Set of objects this conflict set conflicts with. */
-    protected final Map<ICorfuWrapper, Set<Object>> conflicts = new HashMap<>();
+    protected final Map<IObjectManager, Set<Object>> conflicts = new HashMap<>();
 
     /** Get a hash for the object, given a proxy. */
-    public static byte[] generateHashFromObject(ICorfuWrapper p, Object o) {
-        return ((ObjectBuilder)p.getCorfuBuilder()).getSerializer().hash(o);
+    public static byte[] generateHashFromObject(IObjectManager m, Object o) {
+        return ((ObjectBuilder)m.getBuilder()).getSerializer().hash(o);
     }
 
-    public Optional<ICorfuWrapper> getWrapper(UUID stream) {
+    public Optional<IObjectManager> getWrapper(UUID stream) {
         return conflicts.keySet().stream()
-                .filter(p -> p.getId$CORFU().equals(stream))
+                .filter(p -> p.getBuilder().getStreamId().equals(stream))
                 .findFirst();
     }
 
@@ -43,7 +44,7 @@ public class ConflictSet {
         return conflicts.entrySet().stream()
                 .collect(Collectors.toMap(
                         // Key = UUID
-                        e -> e.getKey().getId$CORFU(),
+                        e -> e.getKey().getBuilder().getStreamId(),
                         // Value = Generated hash.
                         e -> e.getValue().stream()
                                 .map(o -> ConflictSet.generateHashFromObject(e.getKey(), o))
@@ -58,14 +59,15 @@ public class ConflictSet {
     }
 
     /** Add an operation into this conflict set. */
-    public <T> void add(ICorfuWrapper<T> wrapper, Object[] conflictObjects) {
+    public <T> void add(IObjectManager manager, Object[] conflictObjects) {
+
         if (conflictObjects == null) {
             return;
         }
 
         // Add the conflict objects to the set for this proxy,
         // creating a new set if needed.
-        conflicts.compute(wrapper, (p, c) -> {
+        conflicts.compute(manager, (p, c) -> {
             // If key not previously mapped
             if (c == null) {
                 c = new HashSet<>();

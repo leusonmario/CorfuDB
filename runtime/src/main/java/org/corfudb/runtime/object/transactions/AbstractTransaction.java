@@ -11,6 +11,8 @@ import org.corfudb.runtime.exceptions.AbortCause;
 import org.corfudb.runtime.exceptions.TransactionAbortedException;
 import org.corfudb.runtime.exceptions.TrimmedException;
 import org.corfudb.runtime.object.ICorfuWrapper;
+import org.corfudb.runtime.object.IObjectManager;
+import org.corfudb.runtime.object.IStateMachineStream;
 import org.corfudb.runtime.object.VersionedObjectManager;
 import org.corfudb.runtime.object.IStateMachineAccess;
 import org.corfudb.runtime.object.IStateMachineEngine;
@@ -48,7 +50,7 @@ import lombok.extern.slf4j.Slf4j;
  */
 @Slf4j
 @ToString
-public abstract class AbstractTransaction implements IStateMachineEngine {
+public abstract class AbstractTransaction {
 
     /**
      * Constant for a transaction which has been folded into
@@ -76,105 +78,27 @@ public abstract class AbstractTransaction implements IStateMachineEngine {
     @Getter
     public final TransactionBuilder builder;
 
+    @Getter
+    public final AbstractTransaction parent;
+
     /**
      * The start time of the context.
      */
     @Getter
     public final long startTime;
 
-    /**
-     * A future which gets completed when this transaction commits.
-     * It is completed exceptionally when the transaction aborts.
-     */
-    @Getter
-    public CompletableFuture<Boolean> completionFuture =
-            new CompletableFuture<>();
-
-    AbstractTransaction(TransactionBuilder builder) {
+    AbstractTransaction(TransactionBuilder builder, AbstractTransaction parent) {
         transactionID = UUID.randomUUID();
-        this.builder = builder;
         startTime = System.currentTimeMillis();
+        this.builder = builder;
+        this.parent = parent;
     }
 
-    /**
-     * Access the state of the object.
-     *
-     * @param proxy          The proxy to access the state for.
-     * @param accessFunction The function to execute, which will be provided with the state
-     *                       of the object.
-     * @param conflictObject Fine-grained conflict information, if available.
-     * @param <R>            The return type of the access function.
-     * @param <T>            The type of the proxy's underlying object.
-     * @return The return value of the access function.
-     */
-    public abstract <R, T> R access(ICorfuWrapper<T> proxy,
-                                    IStateMachineAccess<R, T> accessFunction,
-                                    Object[] conflictObject);
 
-    /**
-     * Get the result of an upcall.
-     *
-     * @param proxy          The proxy to retrieve the upcall for.
-     * @param timestamp      The timestamp to return the upcall for.
-     * @param conflictObject Fine-grained conflict information, if available.
-     * @param <T>            The type of the proxy's underlying object.
-     * @return The result of the upcall.
-     */
-    public abstract <T, R> R getUpcallResult(ICorfuWrapper<T> proxy,
-                                               long timestamp,
-                                               Object[] conflictObject);
-
-    public void syncWithRetryUnsafe(VersionedObjectManager vlo,
-                                    long snapshotTimestamp,
-                                    ICorfuWrapper wrapper,
-                                    @Nullable Consumer<VersionedObjectManager> optimisticStreamSetter)
-    {
-        for (int x = 0; x < this.builder.getRuntime().getTrimRetry(); x++) {
-            try {
-                if (optimisticStreamSetter != null) {
-                    // Swap ourselves to be the active optimistic stream.
-                    // Inside setAsOptimisticStream, if there are
-                    // currently optimistic updates on the object, we
-                    // roll them back.  Then, we set this context as  the
-                    // object's new optimistic context.
-                    optimisticStreamSetter.accept(vlo);
-                }
-                vlo.syncObjectUnsafe(snapshotTimestamp);
-                break;
-            } catch (TrimmedException te) {
-                // If a trim is encountered, we must reset the object
-                vlo.resetUnsafe();
-                if (!te.isRetriable()
-                        || x == this.builder.getRuntime().getTrimRetry() - 1) {
-                    // abort the transaction
-                    TransactionAbortedException tae =
-                            new TransactionAbortedException(
-                                    new TxResolutionInfo(getTransactionID(),
-                                            snapshotTimestamp), null,
-                                    wrapper.getId$CORFU(),
-                                    AbortCause.TRIM, te, this);
-                    abort(tae);
-                    throw tae;
-                }
-            }
-        }
-    }
-
-    /**
-     * Log an SMR update to the Corfu log.
-     *
-     * @param proxy          The proxy which generated the update.
-     * @param updateEntry    The entry which we are writing to the log.
-     * @param conflictObject Fine-grained conflict information, if available.
-     * @param <T>            The type of the proxy's underlying object.
-     * @return The address the update was written at.
-     */
-    public abstract <T> long logUpdate(ICorfuWrapper<T> proxy, String smrUpdateFunction,
-                                       boolean keepUpcallResult,
-                                       Object[] conflictObject, Object... args);
+    public abstract IStateMachineStream getStateMachineStream(IObjectManager manager,
+                                                              IStateMachineStream current);
 
     public long commit() throws TransactionAbortedException {
-        completionFuture.complete(true);
         return NOWRITE_ADDRESS;
     }
 
@@ -183,8 +107,6 @@ public abstract class AbstractTransaction implements IStateMachineEngine {
      */
     public void abort(TransactionAbortedException ae) {
         AbstractTransaction.log.debug("abort[{}]", this);
-        completionFuture
-                .completeExceptionally(ae);
     }
 
     @Override

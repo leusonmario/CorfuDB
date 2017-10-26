@@ -12,36 +12,11 @@ import org.corfudb.runtime.view.ObjectBuilder;
 public class CorfuWrapperBuilder {
 
     static <T> VersionedObjectManager<T> generateManager(ICorfuWrapper<T> w, ObjectBuilder<T> builder) {
-        return new VersionedObjectManager<>(
-                () -> {
-                    try {
-                        T ret = null;
-                        if (builder.getArguments() == null ||
-                                builder.getArguments().length == 0) {
-                            ret = builder.getType().newInstance();
-                        } else {
-                            // This loop is not ideal, but the easiest way to get around Java boxing,
-                            // which results in primitive constructors not matching.
-                            for (Constructor<?> constructor : builder
-                                    .getType().getDeclaredConstructors()) {
-                                try {
-                                    ret = (T) constructor.newInstance(builder.getArguments());
-                                    break;
-                                } catch (Exception e) {
-                                    // just keep trying until one works.
-                                }
-                            }
-                        }
-                        return ret;
-                    } catch (InstantiationException | IllegalAccessException e) {
-                        throw new RuntimeException(e);
-                    }
-                }
-                ,
-                new StreamViewStateMachineAdapter(
+        return new VersionedObjectManager<>(new LinearizableStateMachineStream(
                         builder.getRuntime(),
                         builder.getRuntime()
-                                .getStreamsView().get(builder.getStreamId())),
+                                .getStreamsView().get(builder.getStreamId()),
+                        builder.getSerializer()),
                 w, builder);
     }
 

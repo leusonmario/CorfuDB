@@ -2,6 +2,7 @@ package org.corfudb.runtime.view;
 
 import com.google.common.reflect.TypeToken;
 
+import java.lang.reflect.Constructor;
 import java.util.EnumSet;
 import java.util.Set;
 import java.util.UUID;
@@ -19,6 +20,7 @@ import org.corfudb.runtime.object.CorfuWrapperBuilder;
 import org.corfudb.runtime.object.ICorfuWrapper;
 import org.corfudb.runtime.object.IObjectBuilder;
 import org.corfudb.runtime.object.VersionedObjectManager;
+import org.corfudb.runtime.view.stream.IStreamView;
 import org.corfudb.util.serializer.ISerializer;
 import org.corfudb.util.serializer.Serializers;
 
@@ -66,6 +68,30 @@ public class ObjectBuilder<T> implements IObjectBuilder<T> {
     @Override
     public UUID getStreamId() {
         return streamID;
+    }
+
+    @Override
+    public T getRawInstance() {
+        try {
+            T ret = null;
+            if (getArguments() == null || getArguments().length == 0) {
+                ret = getType().newInstance();
+            } else {
+                // This loop is not ideal, but the easiest way to get around Java boxing,
+                // which results in primitive constructors not matching.
+                for (Constructor<?> constructor : getType().getDeclaredConstructors()) {
+                    try {
+                        ret = (T) constructor.newInstance(getArguments());
+                        break;
+                    } catch (Exception e) {
+                        // just keep trying until one works.
+                    }
+                }
+            }
+            return ret;
+        } catch (InstantiationException | IllegalAccessException e) {
+            throw new RuntimeException(e);
+        }
     }
 
     @SuppressWarnings("unchecked")

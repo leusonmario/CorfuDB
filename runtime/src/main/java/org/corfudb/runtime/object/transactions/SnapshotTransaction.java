@@ -2,7 +2,9 @@ package org.corfudb.runtime.object.transactions;
 
 import org.corfudb.runtime.exceptions.TransactionAbortedException;
 import org.corfudb.runtime.object.ICorfuWrapper;
+import org.corfudb.runtime.object.IObjectManager;
 import org.corfudb.runtime.object.IStateMachineAccess;
+import org.corfudb.runtime.object.IStateMachineStream;
 import org.corfudb.runtime.object.VersionedObjectManager;
 
 /**
@@ -18,52 +20,21 @@ public class SnapshotTransaction extends AbstractTransaction {
 
     final long previousSnapshot;
 
-    public SnapshotTransaction(TransactionBuilder builder) {
-        super(builder);
+    public SnapshotTransaction(TransactionBuilder builder, AbstractTransaction parent) {
+        super(builder, parent);
         previousSnapshot = Transactions.getReadSnapshot();
         Transactions.getContext().setReadSnapshot(builder.snapshot);
     }
 
-    /**
-     * {@inheritDoc}
-     */
     @Override
-    public <R, T> R access(ICorfuWrapper<T> wrapper,
-                           IStateMachineAccess<R, T> accessFunction,
-                           Object[] conflictObject) {
-
-        // In snapshot transactions, there are no conflicts.
-        // Hence, we do not need to add this access to a conflict set
-        // do not add: addToReadSet(proxy, conflictObject);
-        return ((VersionedObjectManager<T>)wrapper.getObjectManager$CORFU())
-                    .access(o -> o.getVersionUnsafe()
-                        == builder.getSnapshot()
-                        && !o.isOptimisticallyModifiedUnsafe(),
-                o -> {
-                    syncWithRetryUnsafe(o, builder.getSnapshot(), wrapper, null);
-                },
-                o -> accessFunction.access(o));
-    }
-
-    /**
-     * {@inheritDoc}
-     */
-    @Override
-    public <T, R> R getUpcallResult(ICorfuWrapper<T> wrapper,
-                                      long timestamp,
-                                      Object[] conflictObject) {
-        throw new UnsupportedOperationException("Can't get upcall during a read-only transaction!");
-    }
-
-    /**
-     * {@inheritDoc}
-     */
-    @Override
-    public <T> long logUpdate(ICorfuWrapper<T> wrapper,
-                              String smrUpdateFunction, boolean keepUpcallResult,
-                              Object[] conflictObject, Object... args) {
-        throw new UnsupportedOperationException(
-                "Can't modify object during a read-only transaction!");
+    public IStateMachineStream getStateMachineStream(IObjectManager manager,
+                                                     IStateMachineStream current) {
+        if (current instanceof SnapshotStateMachineStream
+                && ((SnapshotStateMachineStream) current).snapshotAddress ==
+                Transactions.getReadSnapshot()) {
+            return current;
+        }
+        return new SnapshotStateMachineStream(current.getRoot(), Transactions.getReadSnapshot());
     }
 
     /**

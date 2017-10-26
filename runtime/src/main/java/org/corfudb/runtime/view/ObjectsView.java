@@ -158,48 +158,6 @@ public class ObjectsView extends AbstractView {
     public long TXEnd()
             throws TransactionAbortedException {
         return Transactions.commit();
-        /*
-        AbstractTransaction context = TransactionalContext.getCurrentContext();
-        if (context == null) {
-            log.warn("Attempted to end a transaction, but no transaction active!");
-            return AbstractTransaction.UNCOMMITTED_ADDRESS;
-        } else {
-            long totalTime = System.currentTimeMillis() - context.getStartTime();
-            log.trace("TXCommit[{}] time={} ms",
-                    context, totalTime);
-            try {
-                return TransactionalContext.getCurrentContext().commit();
-            } catch (TransactionAbortedException e) {
-                log.warn("TXCommit[{}] Exception {}", context, e);
-                TransactionalContext.getCurrentContext().abort(e);
-                throw e;
-            } catch (Exception e) {
-                log.warn("TXCommit[{}] Exception {}", context, e);
-                AbortCause abortCause;
-
-                if (e instanceof NetworkException) {
-                    abortCause = AbortCause.NETWORK;
-                } else {
-                    abortCause = AbortCause.UNDEFINED;
-                }
-
-                long snapshotTimestamp;
-                try {
-                    snapshotTimestamp = context.getSnapshotTimestamp();
-                } catch (NetworkException ne) {
-                    snapshotTimestamp = -1L;
-                }
-
-                TxResolutionInfo txInfo = new TxResolutionInfo(context.getTransactionID(),
-                        snapshotTimestamp);
-                TransactionAbortedException tae = new TransactionAbortedException(txInfo,
-                        null, null, abortCause, e, context);
-                context.abort(tae);
-                throw tae;
-            } finally {
-                TransactionalContext.removeContext();
-            }
-        }*/
     }
 
     /** Given a Corfu object, syncs the object to the most up to date version.

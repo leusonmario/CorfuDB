@@ -97,7 +97,7 @@ public class CompileProxyTest extends AbstractViewTest {
         // sync with the stream entry by entry
         for (int timestamp = 1; timestamp <= concurrency; timestamp++) {
             om
-                    .syncObjectUnsafe(timestamp);
+                    .syncObjectUnsafe(timestamp, null);
             assertThat((afterSync = om.object.getValue()))
                     .isBetween(0, concurrency);
             assertThat(beforeSync)

@@ -2,34 +2,28 @@ package org.corfudb.runtime.object;
 
 import static java.lang.Math.min;
 
-import io.netty.util.internal.ConcurrentSet;
-
-import java.util.List;
-import java.util.ListIterator;
-import java.util.Map;
-import java.util.Optional;
-import java.util.Set;
 import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.locks.StampedLock;
-import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Supplier;
 
-import lombok.Getter;
-import lombok.extern.slf4j.Slf4j;
-import org.corfudb.protocols.logprotocol.SMREntry;
+import javax.annotation.Nonnull;
+
 import org.corfudb.protocols.wireprotocol.TxResolutionInfo;
 import org.corfudb.runtime.exceptions.AbortCause;
 import org.corfudb.runtime.exceptions.NetworkException;
 import org.corfudb.runtime.exceptions.NoRollbackException;
 import org.corfudb.runtime.exceptions.TransactionAbortedException;
+import org.corfudb.runtime.exceptions.TrimmedException;
+import org.corfudb.runtime.exceptions.TrimmedUpcallException;
 import org.corfudb.runtime.object.transactions.AbstractTransaction;
 import org.corfudb.runtime.object.transactions.Transactions;
-import org.corfudb.runtime.object.transactions.WriteSetStateMachineStream;
 import org.corfudb.runtime.view.Address;
 import org.corfudb.runtime.view.ObjectBuilder;
 import org.corfudb.util.Utils;
+
+import lombok.Getter;
+import lombok.extern.slf4j.Slf4j;
 
 //TODO Discard TransactionStream for building maps but not for constructing tails
 
@@ -61,24 +55,6 @@ public class VersionedObjectManager<T> implements IObjectManager<T> {
     T object;
 
     /**
-     * A list of upcalls pending in the system. The proxy keeps this
-     * set so it can remember to save the upcalls for pending requests.
-     */
-    final Set<Long> pendingUpcalls;
-
-    // This enum is necessary because null cannot be inserted
-    // into a ConcurrentHashMap.
-    enum NullValue {
-        NULL_VALUE
-    }
-
-    /**
-     * A list of upcall results, keyed by the address they were
-     * requested.
-     */
-    final Map<Long, Object> upcallResults;
-
-    /**
      * A lock, which controls access to modifications to
      * the object. Any access to unsafe methods should
      * obtain the lock.
@@ -88,22 +64,13 @@ public class VersionedObjectManager<T> implements IObjectManager<T> {
     /**
      * The stream view this object is backed by.
      */
-    private final IStateMachineStream smrStream;
-
-    /**
-     * The optimistic SMR stream on this object, if any.
-     */
-    private WriteSetStateMachineStream optimisticStream;
+    private IStateMachineStream smrStream;
 
     /**
      * The wrapper for this object.
      */
+    @Getter
     private final ICorfuWrapper<T> wrapper;
-
-    /**
-     * A function that generates a new instance of this object.
-     */
-    private final Supplier<T> newObjectFn;
 
     @Getter
     private final ObjectBuilder<T> builder;
@@ -112,12 +79,10 @@ public class VersionedObjectManager<T> implements IObjectManager<T> {
      * The VersionedObjectManager maintains a versioned object which is backed by an IStateMachineStream,
      * and is optionally backed by an additional optimistic update stream.
      *
-     * @param newObjectFn       A function passed to instantiate a new instance of this object.
      * @param smrStream         Stream View backing this object.
      * @param wrapper           The wrapper for this object.
      */
-    public VersionedObjectManager(Supplier<T> newObjectFn,
-                                  StreamViewStateMachineAdapter smrStream,
+    public VersionedObjectManager(LinearizableStateMachineStream smrStream,
                                   ICorfuWrapper<T> wrapper,
                                   ObjectBuilder<T> builder) {
         this.builder = builder;
@@ -126,262 +91,123 @@ public class VersionedObjectManager<T> implements IObjectManager<T> {
 
         this.wrapper = wrapper;
 
-        this.newObjectFn = newObjectFn;
-        this.object = newObjectFn.get();
-
-        this.pendingUpcalls = new ConcurrentSet<>();
-        this.upcallResults = new ConcurrentHashMap<>();
+        this.object = builder.getRawInstance();
 
         lock = new StampedLock();
     }
 
-    /**
-     * Access the internal state of the object, trying first to optimistically access
-     * the object, then obtaining a write lock the optimistic access fails.
-     *
-     * <p>If the directAccessCheckFunction returns true, then we execute the accessFunction
-     * without running updateFunction. If false, we execute the updateFunction to
-     * allow the user to modify the state of the object before calling accessFunction.
-     *
-     * <p>directAccessCheckFunction is executed under an optimistic read lock. Read-only
-     * unsafe operations are permitted. IMPORTANT: since the lock is optimistic, the check
-     * may see inconsistent state.
-     *
-     * <p>updateFunction is executed under a write lock. Both read and write unsafe operations
-     * are permitted.
-     *
-     * <p>accessFunction is accessed either under a read lock or write lock depending on
-     * whether an update was necessary or not.
-     *
-     * @param directAccessCheckFunction A function which returns True if the object can be
-     *                                  accessed without being updated.
-     * @param updateFunction            A function which is executed when direct access
-     *                                  is not allowed and the object must be updated.
-     * @param accessFunction            A function which allows the user to directly access
-     *                                  the object while locked in the state enforced by
-     *                                  either the directAccessCheckFunction or updateFunction.
-     * @param <R>                       The type of the access function return.
-     * @return Returns the access function.
-     */
-    public <R> R access(Function<VersionedObjectManager<T>, Boolean> directAccessCheckFunction,
-                        Consumer<VersionedObjectManager<T>> updateFunction,
-                        Function<T, R> accessFunction) {
-        // First, we try to do an optimistic read on the object, in case it
-        // meets the conditions for direct access.
-        long ts = lock.tryOptimisticRead();
-        if (ts != 0) {
-            try {
-                if (directAccessCheckFunction.apply(this)) {
-                    log.trace("Access [{}] Direct (optimistic-read) access at {}",
-                            this, getVersionUnsafe());
-                    R ret = accessFunction.apply(object);
-                    if (lock.validate(ts)) {
-                        return ret;
-                    }
-                }
-            } catch (Exception e) {
-                // If we have an exception, we didn't get a chance to validate the the lock.
-                // If it's still valid, then we should re-throw the exception since it was
-                // on a correct view of the object.
-                if (lock.validate(ts)) {
-                    throw e;
-                }
-                // Otherwise, it is not on a correct view of the object (the object was
-                // modified) and we should try again by upgrading the lock.
-                log.warn("Access [{}] Direct (optimistic-read) exception, upgrading lock",
-                        this);
-            }
-        }
-        // Next, we just upgrade to a full write lock if the optimistic
-        // read fails, since it means that the state of the object was
-        // updated.
-        try {
-            // Attempt an upgrade
-            ts = lock.tryConvertToWriteLock(ts);
-            // Upgrade failed, try conversion again
-            if (ts == 0) {
-                ts = lock.writeLock();
-            }
-            // Check if direct access is possible (unlikely).
-            if (directAccessCheckFunction.apply(this)) {
-                log.trace("Access [{}] Direct (writelock) access at {}", this, getVersionUnsafe());
-                R ret = accessFunction.apply(object);
-                if (lock.validate(ts)) {
-                    return ret;
-                }
-            }
-            // If not, perform the update operations
-            updateFunction.accept(this);
-            log.trace("Access [{}] Updated (writelock) access at {}", this, getVersionUnsafe());
-            return accessFunction.apply(object);
-            // And perform the access
-        } finally {
-            lock.unlock(ts);
-        }
+
+    private @Nonnull IStateMachineStream getActiveStream() {
+        return Transactions.active()
+                ? Transactions.current().getStateMachineStream(this, smrStream.getRoot())
+                : smrStream.getRoot();
     }
 
     /**
-     * Update the object under a write lock.
-     *
-     * @param updateFunction A function to execute once the write lock has been acquired.
-     * @param <R>            The type of the return of the updateFunction.
-     * @return The return value of the update function.
+     * {@inheritDoc}
      */
-    public <R> R update(Function<VersionedObjectManager<T>, R> updateFunction) {
+    @Override
+    public long logUpdate(String smrUpdateFunction,
+                          boolean keepUpcallResult,
+                          Object[] conflictObject,
+                          Object... args) {
+        final IStateMachineStream stream = getActiveStream();
+        return stream.append(smrUpdateFunction, args, conflictObject, keepUpcallResult);
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    @SuppressWarnings("unchecked")
+    @Override
+    public <R> R getUpcallResult(long address, Object[] conflictObject) {
         long ts = 0;
+            try {
+                IStateMachineStream stream = getActiveStream();
+                IStateMachineOp entry = stream.consumeEntry(address);
+                if (entry == null  || !entry.isUpcallResultPresent()) {
+                    if (lock.isWriteLocked()) {
+                        // Perhaps the last writer calculated the upcall for us
+                        ts = lock.readLock();
+                        try {
+                            entry = stream.consumeEntry(address);
+                            if (entry != null && entry.isUpcallResultPresent()) {
+                                return (R) entry.getUpcallResult();
+                            }
+                        } finally {
+                            lock.unlock(ts);
+                        }
+                    }
+                    try {
+                        ts = lock.writeLock();
+                        checkAndSwitchStreamsUnsafe();
+                        // Potentially pick up other updates.
+                        syncObjectUnsafe(Address.MAX, conflictObject);
+                        entry = stream.consumeEntry(address);
+                    } finally {
+                        lock.unlock(ts);
+                    }
+                }
+
+                if (entry != null && entry.isUpcallResultPresent()) {
+                    return (R) entry.getUpcallResult();
+                }
+                throw new RuntimeException("Attempted to get the result "
+                        + "of an upcall@" + address + " but we are @"
+                        + getVersionUnsafe()
+                        + " and we don't have a copy");
+            } catch (TrimmedException te) {
+                throw new TrimmedUpcallException(address);
+            }
+    }
+
+
+    /** {@inheritDoc} */
+    @Override
+    public <R> R access(IStateMachineAccess<R, T> accessFunction,
+                           Object[] conflictObject) {
+        // Try an optimistic read first.
+        // An optimistic read is possible if the correct stream is present
+        // and that stream has no updates.
+        long checkAddr = Address.MAX;
+        long ts = 0;
+        if (checkStreamUnsafe()) {
+            ts = lock.tryOptimisticRead();
+            if (ts != 0) {
+                checkAddr = smrStream.check();
+                if (checkAddr == Address.UP_TO_DATE
+                        || checkAddr == smrStream.pos()) {
+                    try {
+                        // Up to date, don't need to sync
+                        R ret = accessFunction.access(object);
+                        if (lock.validate(ts)) {
+                            return ret;
+                        }
+                    } catch (Exception ex) {
+                        // An exceptional condition occurred during the optimistic read
+                        // We catch the exception but don't throw it, since it may have
+                        // been a result of inconsistent state.
+                    }
+                }
+
+            }
+        }
+        final long syncAddress = checkAddr == Address.UP_TO_DATE ? Address.MAX : checkAddr;
         try {
             ts = lock.writeLock();
-            log.trace("Update[{}] (writelock)", this);
-            return updateFunction.apply(this);
+            checkAndSwitchStreamsUnsafe();
+            syncObjectUnsafe(syncAddress, conflictObject);
+            return accessFunction.access(object);
         } finally {
             lock.unlock(ts);
         }
     }
 
-    /**
-     * Roll the object back to the supplied version if possible.
-     * This function may roll back to a point prior to the requested version.
-     * Otherwise, throws a NoRollbackException.
-     *
-     * <p>Unsafe, requires that the caller has acquired a write lock.
-     *
-     * @param rollbackVersion The version to rollback to.
-     * @throws NoRollbackException If the object cannot be rolled back to
-     *                             the supplied version.
-     */
-    public void rollbackObjectUnsafe(long rollbackVersion) {
-        log.trace("Rollback[{}] to {}", this, rollbackVersion);
-        rollbackStreamUnsafe(smrStream, rollbackVersion);
-        log.trace("Rollback[{}] completed", this);
-    }
-
-    /**
-     * Move the pointer for this object (effectively, forcefuly
-     * change the version of this object without playing
-     * any updates).
-     *
-     * @param globalAddress The global address to set the pointer to
-     */
-    public void seek(long globalAddress) {
-        smrStream.seek(globalAddress);
-    }
-
-    /**
-     * Bring the object to the requested version, rolling back or syncing
-     * the object from the log if necessary to reach the requested version.
-     *
-     * @param timestamp The timestamp to update the object to.
-     */
-    public void syncObjectUnsafe(long timestamp) {
-        // If there is an optimistic stream attached,
-        // and it belongs to this thread use that
-        if (optimisticallyOwnedByThreadUnsafe()) {
-            // If there are no updates, ensure we are at the right snapshot
-            if (optimisticStream.pos() == Address.NEVER_READ) {
-                final WriteSetStateMachineStream currentOptimisticStream =
-                        optimisticStream;
-                // If we are too far ahead, roll back to the past
-                if (getVersionUnsafe() > timestamp) {
-                    try {
-                        rollbackObjectUnsafe(timestamp);
-                    } catch (NoRollbackException nre) {
-                        log.warn("SyncObjectUnsafe[{}] to {} failed {}", this, timestamp, nre);
-                        resetUnsafe();
-                    }
-                }
-                // Now sync the regular log
-                syncStreamUnsafe(smrStream, timestamp);
-                // It's possible that due to reset,
-                // the optimistic stream is no longer
-                // present. Restore it.
-                optimisticStream = currentOptimisticStream;
-            }
-            syncStreamUnsafe(optimisticStream, Address.OPTIMISTIC);
-        } else {
-            // If there is an optimistic stream for another
-            // transaction, remove it by rolling it back first
-            if (this.optimisticStream != null) {
-                optimisticRollbackUnsafe();
-                this.optimisticStream = null;
-            }
-            // If we are too far ahead, roll back to the past
-            if (getVersionUnsafe() > timestamp) {
-                try {
-                    rollbackObjectUnsafe(timestamp);
-                    // Rollback successfully got us to the right
-                    // version, we're done.
-                    if (getVersionUnsafe() == timestamp) {
-                        return;
-                    }
-                } catch (NoRollbackException nre) {
-                    log.warn("OptimisticRollback[{}] to {} failed {}", this, timestamp, nre);
-                    resetUnsafe();
-                }
-            }
-            syncStreamUnsafe(smrStream, timestamp);
+    protected void rollbackToParent() {
+        while (smrStream.getParent() != null) {
+            syncObjectUnsafe(Address.OPTIMISTIC, null);
+            smrStream = smrStream.getParent();
         }
-    }
-
-    /**
-     * Log an update to this object, noting a request to save the
-     * upcall result if necessary.
-     *
-     * @param entry      The entry to log.
-     * @param saveUpcall True, if the upcall result should be
-     *                   saved, false otherwise.
-     * @return The address the update was logged at.
-     */
-    public long logUpdate(SMREntry entry, boolean saveUpcall) {
-        return smrStream.append(entry,
-                t -> {
-                    if (saveUpcall) {
-                        pendingUpcalls.add(t.getToken().getTokenValue());
-                    }
-                    return true;
-                },
-                t -> {
-                    if (saveUpcall) {
-                        pendingUpcalls.remove(t.getToken().getTokenValue());
-                    }
-                    return true;
-                });
-    }
-
-    /**
-     * Get a handle to the optimistic stream.
-     */
-    public WriteSetStateMachineStream getOptimisticStreamUnsafe() {
-        return optimisticStream;
-    }
-
-    /**
-     * Drop the optimistic stream, effectively making optimistic updates
-     * to this object permanent.
-     */
-    public void optimisticCommitUnsafe() {
-        optimisticStream = null;
-    }
-
-    /**
-     * Check whether or not this object was modified by this thread.
-     *
-     * @return True, if the object was modified by this thread. False otherwise.
-     */
-    public boolean optimisticallyOwnedByThreadUnsafe() {
-        return optimisticStream != null && optimisticStream.isStreamForThisThread();
-    }
-
-    /**
-     * Set the optimistic stream for this thread, rolling back
-     * any previous threads if they were present.
-     *
-     * @param optimisticStream The new optimistic stream to install.
-     */
-    public void setOptimisticStreamUnsafe(WriteSetStateMachineStream optimisticStream) {
-        if (this.optimisticStream != null) {
-            optimisticRollbackUnsafe();
-        }
-        this.optimisticStream = optimisticStream;
     }
 
     /**
@@ -395,20 +221,18 @@ public class VersionedObjectManager<T> implements IObjectManager<T> {
     }
 
     /**
-     * Check whether this object is currently under optimistic modifications.
-     */
-    public boolean isOptimisticallyModifiedUnsafe() {
-        return optimisticStream != null && optimisticStream.pos() != Address.NEVER_READ;
-    }
-
-    /**
      * Reset this object to the uninitialized state.
      */
     public void resetUnsafe() {
         log.debug("Reset[{}]", this);
-        object = newObjectFn.get();
+        object = builder.getRawInstance();
+        rollbackToParent();
         smrStream.reset();
-        optimisticStream = null;
+    }
+
+    @Override
+    public int hashCode() {
+        return builder.getStreamId().hashCode();
     }
 
     /**
@@ -421,138 +245,11 @@ public class VersionedObjectManager<T> implements IObjectManager<T> {
      */
     @Override
     public String toString() {
-        WriteSetStateMachineStream optimisticStream = this.optimisticStream;
-
         return object.getClass().getSimpleName()
                 + "[" + Utils.toReadableId(smrStream.getId()) + "]@"
-                + (getVersionUnsafe() == Address.NEVER_READ ? "NR" : getVersionUnsafe())
-                + (optimisticStream == null ? "" : "+" + optimisticStream.pos());
+                + (getVersionUnsafe() == Address.NEVER_READ ? "NR" : getVersionUnsafe());
     }
 
-
-    /**
-     * Given a SMR entry with an undo record, undo the update.
-     *
-     * @param record The record to undo.
-     */
-    protected void applyUndoRecordUnsafe(SMREntry record) {
-        log.trace("Undo[{}] of {}@{} {}->({})", this, record.getSMRMethod(),
-                record.getEntry() != null ? record.getEntry().getGlobalAddress() : "OPT",
-                record.getSMRArguments(),
-                record.getUndoRecord());
-        IUndoFunction<T> undoFunction =
-                wrapper.getCorfuUndoMap().get(record.getSMRMethod());
-        // If the undo function exists, apply it.
-        if (undoFunction != null) {
-            undoFunction.doUndo(object, record.getUndoRecord(),
-                    record.getSMRArguments());
-            return;
-        } else if (wrapper.getCorfuResetSet().contains(record.getSMRMethod())) {
-            // If this is a reset, undo by restoring the
-            // previous state.
-            object = (T) record.getUndoRecord();
-            // clear the undo record, since it is now
-            // consumed (the object may change)
-            record.clearUndoRecord();
-            return;
-        }
-        // Otherwise we don't know how to undo,
-        // throw a runtime exception, because
-        // this is a bug, undoRecords we don't know
-        // how to process shouldn't be in the log.
-        throw new RuntimeException("Unknown undo record in undo log");
-    }
-
-
-    /**
-     * Apply an SMR update to the object, possibly optimistically.
-     *
-     * @param entry The entry to apply.
-     */
-    public Object applyUpdateUnsafe(SMREntry entry) {
-        log.trace("Apply[{}] of {}@{} ({})", this, entry.getSMRMethod(),
-                entry.getEntry() != null ? entry.getEntry().getGlobalAddress() : "OPT",
-                entry.getSMRArguments());
-
-        IStateMachineUpcall<T> target = wrapper.getCorfuSMRUpcallMap().get(entry.getSMRMethod());
-        if (target == null) {
-            throw new RuntimeException("Unknown upcall " + entry.getSMRMethod());
-        }
-
-        // No undo record is present
-        // -OR- there this is an optimistic entry, calculate
-        // an undo record.
-        // (in the case of optimistic entries, the snapshot
-        // may have changed since the last time they were
-        // applied, so we need to recalculate undo) --- this
-        // is the case without snapshot isolation
-        if (!entry.isUndoable() || entry.getEntry() == null) {
-            // Can we generate an undo record?
-            IUndoRecordFunction<T> undoRecordTarget =
-                    wrapper.getCorfuUndoRecordMap()
-                            .get(entry.getSMRMethod());
-            // If there was no previously calculated undo entry
-            if (undoRecordTarget != null) {
-                // calculate the undo record
-                entry.setUndoRecord(undoRecordTarget
-                        .getUndoRecord(object, entry.getSMRArguments()));
-                log.trace("Apply[{}] Undo->{}", this, entry.getUndoRecord());
-            } else if (wrapper.getCorfuResetSet().contains(entry.getSMRMethod())) {
-                // This entry actually resets the object. So here
-                // we can safely get a new instance, and add the
-                // previous instance to the undo log.
-                entry.setUndoRecord(object);
-                object = newObjectFn.get();
-                log.trace("Apply[{}] Undo->RESET", this);
-            }
-        }
-
-        // now invoke the upcall
-        Object ret = target.upcall(object, entry.getSMRArguments());
-        return ret;
-    }
-
-    /**
-     * Roll back the given stream by applying undo records in reverse order
-     * from the current stream position until rollbackVersion.
-     *
-     * @param stream          The stream of SMR updates to apply in
-     *                        reverse order.
-     * @param rollbackVersion The version to stop roll back at.
-     * @throws NoRollbackException If an entry in the stream did not contain
-     *                             undo information.
-     */
-    protected void rollbackStreamUnsafe(IStateMachineStream stream, long rollbackVersion) {
-        // If we're already at or before the given version, there's
-        // nothing to do
-        if (stream.pos() <= rollbackVersion) {
-            return;
-        }
-
-        List<SMREntry> entries = stream.current();
-
-        while (entries != null) {
-            if (entries.stream().allMatch(x -> x.isUndoable())) {
-                // start from the end, process one at a time
-                ListIterator<SMREntry> it =
-                        entries.listIterator(entries.size());
-                while (it.hasPrevious()) {
-                    applyUndoRecordUnsafe(it.previous());
-                }
-            } else {
-                Optional<SMREntry> entry = entries.stream().findFirst();
-                throw new NoRollbackException(entry, stream.pos(), rollbackVersion);
-            }
-
-            entries = stream.previous();
-
-            if (stream.pos() <= rollbackVersion) {
-                return;
-            }
-        }
-
-        throw new NoRollbackException(stream.pos(), rollbackVersion);
-    }
 
     /**
      * Sync this stream by playing updates forward in the stream until
@@ -566,80 +263,93 @@ public class VersionedObjectManager<T> implements IObjectManager<T> {
      * reset and re-try the sync, which should pick up any checkpoint that
      * was inserted.
      *
-     * @param stream    The stream to sync forward
      * @param timestamp The timestamp to sync up to.
      */
-    protected void syncStreamUnsafe(IStateMachineStream stream, long timestamp) {
-        log.trace("Sync[{}] {}", this, (timestamp == Address.OPTIMISTIC)
-                ? "Optimistic" : "to " + timestamp);
-        long syncTo = (timestamp == Address.OPTIMISTIC) ? Address.MAX : timestamp;
-        stream.streamUpTo(syncTo)
-                .forEachOrdered(entry -> {
-                    try {
-                        Object res = applyUpdateUnsafe(entry);
-                        if (timestamp == Address.OPTIMISTIC) {
-                            entry.setUpcallResult(res);
-                        } else if (pendingUpcalls.contains(entry.getEntry().getGlobalAddress())) {
-                            log.debug("Sync[{}] Upcall Result {}",
-                                    this, entry.getEntry().getGlobalAddress());
-                            upcallResults.put(entry.getEntry().getGlobalAddress(), res == null
-                                    ? NullValue.NULL_VALUE : res);
-                            pendingUpcalls.remove(entry.getEntry().getGlobalAddress());
+    protected void syncObjectUnsafe(long timestamp, Object[] conflictObjects) {
+        log.trace("Sync[{}] to {}", this, timestamp);
+        for (int tries = 0; tries < builder.getRuntime().trimRetry; tries++) {
+            try {
+                smrStream.sync(timestamp, conflictObjects)
+                    .forEachOrdered(op -> {
+                        try {
+                            object = op.apply(wrapper, object);
+                        } catch (Exception e) {
+                            log.error("Sync[{}] Error: Couldn't execute upcall due to {}", this, e);
+                            throw new RuntimeException(e);
                         }
-                        entry.setUpcallResult(res);
-                    } catch (Exception e) {
-                        log.error("Sync[{}] Error: Couldn't execute upcall due to {}", this, e);
-                        throw new RuntimeException(e);
+                    });
+                return;
+            } catch (NoRollbackException nre) {
+                log.info("Failed to rollback, resetting and retrying");
+                resetUnsafe();
+            } catch (TrimmedException te) {
+                if (!te.isRetriable()) {
+                    log.warn("Trim is not retriable, aborting sync");
+                    throw te;
+                } else if (tries + 1 >= builder.getRuntime().trimRetry) {
+                    if (Transactions.active()) {
+                        Transactions.abort(new TransactionAbortedException(
+                                new TxResolutionInfo(
+                                       Transactions.current().getTransactionID(),
+                                       Transactions.getReadSnapshot()), null, builder.getStreamId(),
+                                AbortCause.TRIM, te, Transactions.current()));
+                    } else {
+                        throw te;
                     }
-                });
-    }
+                }
+                log.info("Encountered trim during playback, resetting and retrying");
+                resetUnsafe();
+            }
 
-    /**
-     * Roll back the optimistic stream, resetting the object if it can not
-     * be restored.
-     */
-    protected void optimisticRollbackUnsafe() {
-        try {
-            log.trace("OptimisticRollback[{}] started", this);
-            rollbackStreamUnsafe(this.optimisticStream,
-                    Address.NEVER_READ);
-            log.trace("OptimisticRollback[{}] complete", this);
-        } catch (NoRollbackException nre) {
-            log.warn("OptimisticRollback[{}] failed", this);
-            resetUnsafe();
+            // We must restore the transactional stream if we were operating transactionally
+            checkAndSwitchStreamsUnsafe();
         }
+        throw new RuntimeException("Unable to sync object and retry limit exhausted");
     }
 
-    /** Apply an SMREntry to the version object, while
-     * doing bookkeeping for the underlying stream.
-     *
-     * @param entry
-     */
-    public void applyUpdateToStreamUnsafe(SMREntry entry, long globalAddress) {
-        applyUpdateUnsafe(entry);
-        seek(globalAddress + 1);
-    }
-
-
-
-    /** {@inheritDoc} */
-    public Object[] getConflictFromEntry(String smrMethod, Object[] smrArguments) {
-        return wrapper.getCorfuEntryToConflictMap().get(smrMethod).getConflictSet(smrArguments);
-    }
-
-
-    @Override
-    public IStateMachineEngine getEngine() {
+    protected void checkAndSwitchStreamsUnsafe() {
         if (Transactions.active()) {
-            return Transactions.current();
+            IStateMachineStream txStream = Transactions.current()
+                    .getStateMachineStream(this, smrStream);
+            if (!txStream.equals(smrStream)) {
+                rollbackToParent();
+                smrStream = txStream;
+            }
+        } else if (smrStream.getParent() != null) {
+            rollbackToParent();
         }
+    }
 
-        return builder.getRuntime().getDefaultEngine();
+    protected boolean checkStreamUnsafe() {
+        if (Transactions.active()) {
+            return Transactions.current().getStateMachineStream(this, smrStream)
+                    .equals(smrStream);
+        } else {
+            return smrStream.getParent() == null;
+        }
+    }
+
+    @Nonnull
+    public IStateMachineStream installNewStream(@Nonnull
+                            Function<IStateMachineStream, IStateMachineStream> streamGenerator) {
+        long ts = lock.writeLock();
+        try {
+            rollbackToParent();
+            smrStream = streamGenerator.apply(smrStream.getRoot());
+            return smrStream;
+        } finally {
+            lock.unlock(ts);
+        }
     }
 
     @Override
     public long getVersion() {
         return getVersionUnsafe();
+    }
+
+    @Override
+    public UUID getId() {
+        return builder.getStreamId();
     }
 
     void abortTransaction(Exception e) {
@@ -743,10 +453,12 @@ public class VersionedObjectManager<T> implements IObjectManager<T> {
     /** {@inheritDoc} */
     @Override
     public void sync() {
-        update(o -> {
-            o.syncObjectUnsafe(Address.MAX);
-            return null;
-        });
+        long ts = lock.writeLock();
+        try {
+            checkAndSwitchStreamsUnsafe();
+            syncObjectUnsafe(Address.MAX, null);
+        } finally {
+            lock.unlock(ts);
+        }
     }
-
 }

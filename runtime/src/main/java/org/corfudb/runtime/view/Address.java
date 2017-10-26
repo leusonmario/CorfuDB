@@ -92,4 +92,6 @@ public class Address {
      * to another stream.
      */
     public static final long COW_BACKPOINTER = -7L;
+
+    public static final long UP_TO_DATE = -8L;
 }

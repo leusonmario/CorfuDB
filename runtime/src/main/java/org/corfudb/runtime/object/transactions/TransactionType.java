@@ -1,5 +1,6 @@
 package org.corfudb.runtime.object.transactions;
 
+import java.util.function.BiFunction;
 import java.util.function.Function;
 
 import lombok.RequiredArgsConstructor;
@@ -14,5 +15,5 @@ public enum TransactionType {
     WRITE_AFTER_WRITE(WriteAfterWriteTransaction::new),
     READ_AFTER_WRITE(ReadAfterWriteTransaction::new);
 
-    final Function<TransactionBuilder, ? extends AbstractTransaction> get;
+    final BiFunction<TransactionBuilder, AbstractTransaction, ? extends AbstractTransaction> get;
 }

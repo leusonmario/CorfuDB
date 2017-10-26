@@ -7,8 +7,8 @@ package org.corfudb.runtime.object.transactions;
 public class OptimisticTransaction extends ReadAfterWriteTransaction {
 
     /** Generate a new optimistic (read-after-write) transactional context. */
-    public OptimisticTransaction(TransactionBuilder builder) {
-        super(builder);
+    public OptimisticTransaction(TransactionBuilder builder, AbstractTransaction parent) {
+        super(builder, parent);
         obtainSnapshotTimestamp();
     }
 }

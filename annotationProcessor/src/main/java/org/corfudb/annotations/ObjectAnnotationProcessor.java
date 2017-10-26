@@ -489,7 +489,7 @@ public class ObjectAnnotationProcessor extends AbstractProcessor {
                         ms.addStatement(
                                 (mutatorAccessor != null ? "long address"
                                         + CORFUSMR_FIELD + " = " : "")
-                                        + "getEngine$$CORFU().logUpdate(this, $S,$L,$L$L$L)",
+                                        + "getObjectManager$$CORFU().logUpdate($S,$L,$L$L$L)",
                                 getSmrFunctionName(smrMethod),
                                 // Don't need upcall result for mutators
                                 mutator != null ? "false" :
@@ -512,7 +512,7 @@ public class ObjectAnnotationProcessor extends AbstractProcessor {
                         if (!smrMethod.getReturnType().getKind().equals(TypeKind.VOID)) {
                             ms.addStatement("return ("
                                     + ParameterizedTypeName.get(smrMethod.getReturnType())
-                                    + ") getEngine$$CORFU().getUpcallResult(this, address"
+                                    + ") getObjectManager$$CORFU().getUpcallResult(address"
                                     + CORFUSMR_FIELD
                                     +  ", "
                                     + (m.hasConflictAnnotations ? conflictField : "null")
@@ -556,7 +556,7 @@ public class ObjectAnnotationProcessor extends AbstractProcessor {
                         // Otherwise, just force the access to access the underlying call.
                         ms.addStatement((smrMethod.getReturnType().getKind()
                                         .equals(TypeKind.VOID) ? "" : "return ") +
-                                        "getEngine$$CORFU().access(this," + "o" + CORFUSMR_FIELD
+                                        "getObjectManager$$CORFU().access(" + "o" + CORFUSMR_FIELD
                                         + " -> {$Lo" + CORFUSMR_FIELD + ".$L($L);$L}," + "$L)",
                                 smrMethod.getReturnType().getKind().equals(TypeKind.VOID)
                                         ? "" : "return ",

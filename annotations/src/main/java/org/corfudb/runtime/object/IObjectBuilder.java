@@ -55,6 +55,11 @@ public interface IObjectBuilder<T> {
      */
     UUID getStreamId();
 
+    /** Get a new instance of this object.
+     * @return  Get a new uninstrumented instance of this object.
+     */
+    T getRawInstance();
+
     /** Open the object, using the parameters given to the builder.
      *
      * @return  An instance of the Corfu object.

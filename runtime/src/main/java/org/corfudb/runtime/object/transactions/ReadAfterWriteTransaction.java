@@ -1,18 +1,29 @@
 package org.corfudb.runtime.object.transactions;
 
+import java.util.UUID;
+
 import org.corfudb.runtime.object.ICorfuWrapper;
+import org.corfudb.runtime.object.IObjectManager;
+import org.corfudb.runtime.object.IStateMachineAccess;
+import org.corfudb.runtime.object.IStateMachineStream;
 
 public class ReadAfterWriteTransaction
         extends AbstractOptimisticTransaction {
 
-    public ReadAfterWriteTransaction(TransactionBuilder builder) {
-        super(builder);
+    @Override
+    public IStateMachineStream getStateMachineStream(IObjectManager manager,
+                                                     IStateMachineStream current) {
+        if (current instanceof ReadAfterWriteStateMachineStream
+                && ((ReadAfterWriteStateMachineStream) current).writerContext.isActive()) {
+            return current;
+        }
+        return new ReadAfterWriteStateMachineStream(manager, current.getRoot(),
+                obtainSnapshotTimestamp());
     }
 
-    @Override
-    protected <T> void addToReadSet(ICorfuWrapper<T> wrapper,
-                                       Object[] conflictObject) {
-        Transactions.getContext().getConflictSet().add(wrapper, conflictObject);
+
+    public ReadAfterWriteTransaction(TransactionBuilder builder, AbstractTransaction parent) {
+        super(builder, parent);
     }
 
 }

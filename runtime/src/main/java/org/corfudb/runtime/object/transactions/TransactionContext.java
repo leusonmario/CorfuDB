@@ -1,7 +1,11 @@
 package org.corfudb.runtime.object.transactions;
 
 import java.util.Collections;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.UUID;
 
+import org.corfudb.runtime.object.IStateMachineStream;
 import org.corfudb.runtime.view.Address;
 
 import lombok.AccessLevel;
@@ -23,4 +27,16 @@ public class TransactionContext {
     @Getter
     @Setter(value = AccessLevel.PACKAGE)
     long readSnapshot = Address.NO_SNAPSHOT;
+
+    @Getter
+    @Setter(value = AccessLevel.PACKAGE)
+    long commitAddress = Address.OPTIMISTIC;
+
+    @Getter
+    @Setter(value = AccessLevel.PACKAGE)
+    AbstractTransaction current;
+
+    boolean isActive() {
+        return Transactions.getContext().equals(this);
+    }
 }

@@ -7,10 +7,13 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.Callable;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.BiFunction;
+import java.util.function.Consumer;
 import java.util.function.Function;
+import java.util.function.Supplier;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
@@ -48,22 +51,38 @@ import org.corfudb.util.Version;
 @Accessors(chain = true)
 public class CorfuRuntime {
 
-    static final int DEFAULT_TIMEOUT_MINUTES_FAST_LOADING = 30;
+    // This is the time the runtime will wait when there are network exceptions
+    // that block the progression of the operations. When the timeout is elapsed,
+    // the systemUnavailableHandler is called. This could be a default one or one provided
+    // by a the application.
+    static final int DEFAULT_TIMEOUT_RUNTIME = 60000;
 
+    static final int DEFAULT_TIMEOUT_MINUTES_FAST_LOADING = 30;
     public static final int BULK_READ_SIZE = 10;
 
     @Data
     public static class CorfuRuntimeParameters {
 
-        /** True, if undo logging is disabled. */
+        /**
+         * True, if undo logging is disabled.
+         */
         boolean undoDisabled = false;
 
-        /** True, if optimistic undo logging is disabled. */
+        /**
+         * True, if optimistic undo logging is disabled.
+         */
         boolean optimisticUndoDisabled = false;
 
-        /** Number of times to attempt to read before hole filling. */
+        /**
+         * Number of times to attempt to read before hole filling.
+         */
         int holeFillRetry = 10;
+
+        // Runtime timeout before the system is declared unavailable
+        long runtimeTimeout = DEFAULT_TIMEOUT_RUNTIME;
     }
+
+
 
     @Getter
     private final CorfuRuntimeParameters parameters = new CorfuRuntimeParameters();
@@ -230,6 +249,40 @@ public class CorfuRuntime {
     }
 
     /**
+     * This handler is used when the system is declared unavailable. The default implementation
+     * is to shutdown. The client can provide its own implementation via the
+     */
+    Supplier<?> handler = () -> {
+        shutdown();
+        return null;
+    };
+
+    public <T> T callSystemUnavailableHandlder() {
+        return (T) handler.get();
+    }
+
+    /**
+     * Register a Supplier that return a value of type T
+     * @param handler
+     * @param <T>
+     */
+    public <T> void registerSystemUnavailableHandler(Supplier<T> handler) {
+        this.handler = handler;
+    }
+
+    /**
+     * Register a Runnable that is transformed in a Supplier that returns null
+     * @param handler
+     */
+    public void registerSystemUnavailableHandler(Runnable handler) {
+        this.handler = () -> {
+            handler.run();
+            return null;
+        };
+    }
+
+
+    /**
      * When set, overrides the default getRouterFunction. Used by the testing
      * framework to ensure the default routers used are for testing.
      */
@@ -353,7 +406,7 @@ public class CorfuRuntime {
      * Stop all routers associated with this Corfu Runtime.
      **/
     public void stop(boolean shutdown) {
-        for (IClientRouter r: nodeRouters.values()) {
+        for (IClientRouter r : nodeRouters.values()) {
             r.stop(shutdown);
         }
         if (!shutdown) {
@@ -419,6 +472,7 @@ public class CorfuRuntime {
     /**
      * If enabled, successful transactions will be written to a special transaction stream
      * (i.e. TRANSACTION_STREAM_ID)
+     *
      * @param enable indicates if transaction logging is enabled
      * @return corfu runtime object
      */
@@ -489,7 +543,7 @@ public class CorfuRuntime {
         return CompletableFuture.<Layout>supplyAsync(() -> {
 
             while (true) {
-                List<String> layoutServersCopy =  layoutServers.stream().collect(
+                List<String> layoutServersCopy = layoutServers.stream().collect(
                         Collectors.toList());
                 Collections.shuffle(layoutServersCopy);
                 // Iterate through the layout servers, attempting to connect to one

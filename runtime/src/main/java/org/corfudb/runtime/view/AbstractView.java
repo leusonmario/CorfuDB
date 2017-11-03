@@ -8,7 +8,9 @@ import javax.annotation.Nonnull;
 import lombok.extern.slf4j.Slf4j;
 
 import org.corfudb.runtime.CorfuRuntime;
+import org.corfudb.runtime.exceptions.NetworkException;
 import org.corfudb.runtime.exceptions.ServerNotReadyException;
+import org.corfudb.runtime.exceptions.SystemUnavailableException;
 import org.corfudb.runtime.exceptions.WrongEpochException;
 
 /**
@@ -30,6 +32,10 @@ public abstract class AbstractView {
 
     public AbstractView(@Nonnull final CorfuRuntime runtime) {
         this.runtime = runtime;
+    }
+
+    private boolean timeoutNotElapsed(long startTime) {
+        return System.currentTimeMillis() - startTime < runtime.getParameters().getRuntimeTimeout();
     }
 
     /**
@@ -71,7 +77,9 @@ public abstract class AbstractView {
             D extends RuntimeException> T layoutHelper(LayoutFunction<Layout, T, A, B, C, D>
                                                                           function)
             throws A, B, C, D {
-        while (true) {
+        long startTime = System.currentTimeMillis();
+
+        while(timeoutNotElapsed(startTime)) {
             try {
                 return function.apply(runtime.layout.get());
             } catch (RuntimeException re) {
@@ -97,6 +105,13 @@ public abstract class AbstractView {
                     log.warn("Got a wrong epoch exception, updating epoch to {} and "
                             + "invalidate view", we.getCorrectEpoch());
                     runtime.invalidateLayout();
+                } else if(re instanceof NetworkException) {
+                    try {
+                        Thread.sleep(runtime.retryRate * 1000);
+                    } catch (InterruptedException e) {
+                        log.warn("Interrupted Exception in layout helper.", e);
+                    }
+                    log.warn("System seems unavailable");
                 } else {
                     throw re;
                 }
@@ -111,6 +126,9 @@ public abstract class AbstractView {
                 }
             }
         }
+        // System is unavailable, call the handler
+        runtime.callSystemUnavailableHandlder();
+        throw new SystemUnavailableException(runtime.getParameters().getRuntimeTimeout());
     }
 
     @FunctionalInterface

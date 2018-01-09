@@ -1,29 +1,26 @@
+
+sudo: required
 language: java
-sudo: false
+
 jdk:
 - oraclejdk8
-before_install:
-- .travis_scripts/build_thrift.sh
-- export PATH=$PATH:$HOME/thrift/bin
-install:
-- travis_retry mvn clean install
-after_success:
-- mvn jacoco:report coveralls:report
-- .travis_scripts/javadocs.sh
-- .travis_scripts/mvnrepo.sh
-cache:
-  directories:
-  - $HOME/thrift
-  - $HOME/.m2
-notifications:
-  email:
-    - corfudb-dev@googlegroups.com
-  webhooks:
-    urls:
-        - https://webhooks.gitter.im/e/e26458f01e3586e3c140
-    on_success: always
-    on_failure: always
-    on_start: true
-env:
-  global:
-    secure: WJZd15DtGSetu3HuaPE/Ap0EaPkR1D68ZUIFxyqUho8AY/rLGuANUrAY5U02jO1K1+iaYFMecRr2ZlOEK4N1XiBNz2gMnYmkHmUs9Gz+J3eA8SXdYOHsKyI5iRpyUgwzHIVLOKz03cvDlI04Rrm0Uhe/7hjNaXVge6I0YKPmiXI=
+
+
+script:
+  - mvn clean cobertura:cobertura -Dtest=LocalCorfuDBInstanceTest#canInstanceBeReset -DfailIfNoTests=false
+
+before_deploy:
+- tar -zcvf coverage-result.tar.gz /home/travis/build/leusonmario/CorfuDB/target/site/cobertura
+
+deploy:
+  provider: releases
+  api_key:
+    secure: "cH63X1jV7MWf6CSJqWt71TYnogdDQprkW9IazUZdsUwOAnW2o9closwHoWVH4DdRkk3qV1JXSrgvQ3PPYvrzn5M78wbCdozBpa0fWFzVGfPcUAqRY+mGRFOTBFbpWY4Uu5F72LahZ168KRLM60W8myaN60Mg33gT7+aamG0GvJrtWRK8PxTk3aYV3Itvqwl9Ew2KpZG5Pg7ky0Vt3whnF7QES2QiOzueWpae9qmcKyz6RRLDNb9io1lcUB+sbunypxJS3cKJ+Ua39AJLpSYpV+ulQkpm7PuLVPB2IcMDJ7VuoZotpRVdlLIKdM/SCNUk0WH6V+FmUnT+kWiKSSss3pJBTwq9vYDfwD/gjmRikU4ugZXYGj3ByJS4xSDMjog7vtFbTA6bbGfunoDcxWqnuXPvmW/wZsafmkyPPNeJyWOsv836wVETJVPzw8breZk0W2IMn556pdfY+v92QktqtZIkC5HCXmfO1dwzX9QAS35aTcgMA3ub/+RAJJ0WzBVpOi9VzmbQtfMwoRZRX5RoWOCBlAGZY0Vcp2ZU9hhAK3RDTcARjptirRvet1xK0GOCDjvxUyZbheRYjq6LpAIPNBdXPtzGQxhV+YFCBQqqmENJcfL9SUY3DxRnGmEl0Mf4De10hAyo+BBR2eBfB0PMH+zA4eg6AWXwUmtD0MqeAeA="
+
+
+  file: coverage-result.tar.gz
+  file_glob: true
+  overwrite: true
+  skip_cleanup: true
+  on:
+    tags: true

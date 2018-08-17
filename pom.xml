@@ -291,6 +291,7 @@
                 <artifactId>maven-surefire-plugin</artifactId>
                 <version>2.19.1</version>
                 <configuration>
+<testFailureIgnore>true</testFailureIgnore>
                     <systemPropertyVariables>
                         <propertyName>test.travisBuild</propertyName>
                         <propertyName>test.seed</propertyName>
@@ -335,6 +336,17 @@
                     </gitDescribe>
                 </configuration>
             </plugin>
+        <plugin>
+          <groupId>org.codehaus.mojo</groupId>
+          <artifactId>cobertura-maven-plugin</artifactId>
+          <version>2.7</version>
+          <configuration>
+              <format>xml</format>
+              <maxmem>256m</maxmem>
+              <!-- aggregated reports for multi-module projects -->
+              <aggregate>true</aggregate>
+          </configuration>
+         </plugin>
         </plugins>
 
         <resources>

@@ -10,8 +10,10 @@ jdk:
 
 
 
+
+
 script:
-  - mvn clean cobertura:cobertura -Dtest=WorkflowIT#AddAndRemoveNodeIT -DfailIfNoTests=false
+  - mvn clean cobertura:cobertura -Dtest=WorkflowIT#clusterResizingTest2 -DfailIfNoTests=false
 
 before_deploy:
 - tar -zcvf coverage-result.tar.gz /home/travis/build/leusonmario/CorfuDB/target/site/cobertura

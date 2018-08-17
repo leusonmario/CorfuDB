@@ -1,42 +1,26 @@
-language: java
+
 sudo: required
-dist: trusty
+language: java
+
 jdk:
 - oraclejdk8
-before_install:
-- ".travis_scripts/generate_keys.sh $encrypted_026743b97986_key $encrypted_026743b97986_iv"
-- ".travis_scripts/setup_env.sh"
+
+
 script:
-- ".travis_scripts/verify.sh"
-after_success:
-- mvn coveralls:report
-- ".travis_scripts/javadocs.sh"
-- ".travis_scripts/mvnrepo.sh"
-- ".travis_scripts/push_deb.sh"
-- ".travis_scripts/push_docker.sh"
-before_cache:
-- rm -rf $HOME/.m2/repository/org/corfudb
-cache:
-  directories:
-  - "$HOME/.m2"
-  - "$HOME/.sonar/cache"
-notifications:
-  email:
-  - corfudb-dev@googlegroups.com
-  webhooks:
-    urls:
-    - https://webhooks.gitter.im/e/e26458f01e3586e3c140
-    on_success: always
-    on_failure: always
-    on_start: true
-addons:
-  apt:
-    packages: reprepro
-env:
-  global:
-  - secure: WJZd15DtGSetu3HuaPE/Ap0EaPkR1D68ZUIFxyqUho8AY/rLGuANUrAY5U02jO1K1+iaYFMecRr2ZlOEK4N1XiBNz2gMnYmkHmUs9Gz+J3eA8SXdYOHsKyI5iRpyUgwzHIVLOKz03cvDlI04Rrm0Uhe/7hjNaXVge6I0YKPmiXI=
-  - secure: YSaXp8PYE5YOaHOJTWXHIORNTP0oWdNDhSAMud1OD7LvH7ZdSPt35XVG8+Vagz+Y4mufCu0UVqVq62KJLtG9AVpKXxTvDdvCGZ7N5WLbGO0CAscjOuXm1uEKfGefpyFj2HZJ+h8zbuinAoZ5RHZa+SniRb1iES0lJUfxcYBMmoQ=
-  - secure: R7GUxZyUxj1WfvKN7Zcigo59+2Q2UTU489yGw9ac/DKafszwvrJ/z0aUXzADOhR7EIaBuElYb7zytr/DSTeDMoxq+EniH/OTx4S/Btb2Qw5RBw2pYzuahyqiVk3Tc6gcIvlE6gNl4b8K58YzwC634WxnPDmxH4hyIrE4sc3JJcQ=
-  - secure: lzZmbc2HZgHX+xuBqXwwd9Zql+ae+Vw/+oUdO2QfQEuLqZKSUbjefMuaeFPsBrd8f9sUalJBaJ6VxecoWia0Ncj4QC9PR4MxaZaDm2Zt87KGbpxqvBcbZK332toNPTznV9Fozt5Iu0ofcCr86g6nyXcO+Sqr/5mMr/w6NVtYeJQ=
-  - secure: SUmXHAnc9q13aw+Z4kA+JDEQ37OswcBi8KCHfr/7VI54VCmySYzcoYSOb9ADw31htOBDnuer8dMok63WnvFQ8Uad3K8Qj2rroehn6SUvbEjKH4K0PKPbohS1J2Tdpnd7gJ8H7Hydi1fjVTrxC27ih5ZB126Rg3fn6IUecIbYzHk=
-  - secure: Xl5vdWqyF71gMKpjW9djoCg3tn2UVupuVzptSdp+dpcPE+aN1RLEWBys9qtAjuDXR4bcTeMBkb0KIFz5WS7v0J+jPPcbnUWDNR9ixofM06gtlzpAqyN8YO7bd9tJijNnquz+GW1MXx3qIdo09O55OH76f1oQhVxlB+oqDISCV8k=
+  - mvn clean cobertura:cobertura -Dtest=ServerRestartIT#sequencerTailsRecoveryTest -DfailIfNoTests=false
+
+before_deploy:
+- tar -zcvf coverage-result.tar.gz /home/travis/build/leusonmario/CorfuDB/target/site/cobertura
+
+deploy:
+  provider: releases
+  api_key:
+    secure: "bibK56uVV9cZlCSQvUPxowBt10SgXbaz1gF3aYULt8lifxZh0/nLwMPKaPXY3JmK3+7oOBi/cUT52RQRM/uAP/ok0rtjGttQx1oowykLlaJmLUrgta6xBNJj5uD5WhMJ2GiyGofgj3OMQCAgPFQTr6eiO8W9CHQzLMBoVns7WyFYLAlJUjlnViKr1nH94adD4MyR4xkkvHLMjQT7OUgICz0TP6sU+0WqqwIqNxryUZCmEty3Vae1vaEf0Yqa8ZPQP4dLJTA48GqujbtEHMtXXczGIeHtfUQzaB0PmL8nJOWx0G6WGiITvpmbQJzsBKViFNedKKeUdKAprWG+CwEtI76Ba34r2tXVxgtBseOJ7ZLKIq4RzPGQS8yjTFPmC+raNwzAr85FVNlWgjSNkWVE6IdbFqobSo/SeP0Ga0lkXWioiAHKtPkSlJ5BwRreySLzGrVkjufXqJvLIyiWV2qJnFSIEMZY80R4pn8NuJ+0DhvlAZ0xa96PVgjyA4PpaWexRbUhr8Y7OdqQ7C2Nn1elIo1qBl4aQV3ts8LNZNs+FfwQkn/v2gOpim5diw0gRMuW1y9nRdIvVZ/KNfJvT3nGN+yfafhGT2rztfVv3Buct4V7My9F85dJ9Rz5DLKqLLkj4jBPEgp16PYlY8u6jtz7VEWEJNFFlhfQkZgz9gaWNkE="
+
+
+  file: coverage-result.tar.gz
+  file_glob: true
+  overwrite: true
+  skip_cleanup: true
+  on:
+    tags: true

@@ -8,6 +8,8 @@ jdk:
 
 
 
+
+
 script:
   - mvn clean cobertura:cobertura -Dtest=WorkflowIT#AddAndRemoveNodeIT -DfailIfNoTests=false
 

@@ -1,33 +1,26 @@
+
+sudo: required
 language: java
-sudo: false
+
 jdk:
 - oraclejdk8
-before_install:
-- openssl aes-256-cbc -K $encrypted_026743b97986_key -iv $encrypted_026743b97986_iv
-  -in private.key.enc -out private.key -d
-- .travis_scripts/setup_env.sh
-after_success:
-- mvn jacoco:report coveralls:report
-- .travis_scripts/javadocs.sh
-- .travis_scripts/mvnrepo.sh
-- .travis_scripts/push_deb.sh
-before_cache:
-- rm -rf $HOME/.m2/repository/org/corfudb/corfu
-cache:
-  directories:
-  - $HOME/.m2
-notifications:
-  email:
-  - corfudb-dev@googlegroups.com
-  webhooks:
-    urls:
-    - https://webhooks.gitter.im/e/e26458f01e3586e3c140
-    on_success: always
-    on_failure: always
-    on_start: true
-env:
-  global:
-    secure: WJZd15DtGSetu3HuaPE/Ap0EaPkR1D68ZUIFxyqUho8AY/rLGuANUrAY5U02jO1K1+iaYFMecRr2ZlOEK4N1XiBNz2gMnYmkHmUs9Gz+J3eA8SXdYOHsKyI5iRpyUgwzHIVLOKz03cvDlI04Rrm0Uhe/7hjNaXVge6I0YKPmiXI=
-addons:
-  apt:
-    packages: reprepro
+
+
+script:
+  - mvn clean cobertura:cobertura -Dtest=LogUnitServerTest#checkThatWritesArePersisted -DfailIfNoTests=false
+
+before_deploy:
+- tar -zcvf coverage-result.tar.gz /home/travis/build/leusonmario/CorfuDB/target/site/cobertura
+
+deploy:
+  provider: releases
+  api_key:
+    secure: "PAeZT5o9V3LKtKco+t/PMnST59KZmnzFRpJ17LmC5vJJeELcNaBYBahSLxy3L1G2wJPNINPjNlc40B4Sv9CkmccE36wfZll3P/BAraQeIbGzrd4RW01UAoBXtQNw73e6jCaMvI9EJEimctdGFryng/FbIAVTBlCsNEmTs0ltU9CQENCdpj56LZDnJHMatw6KS9eYGxmx8JF6YW7RF0zwCt7oyrv+XHkTJS9BxqeG2HRVfJbKZtU9/eM2v2X4kXP2zHvWEQSKamrPqHHzW+3vio7M3gik0pHT2bNz+AJ/ss7G8QAgr1YD5OLCtPKTQhnPO8+uEghgzlTHaqyzbhx4gzOmJ4uHJDtuEtvwvHRPRfL0qQfuZavsHAC3jjSMtExajpDm7NFLqf8SRVyI34PJO/Ef38ngQxrcuFa3rkH6pg6nYNojMSNqlbKTZn1/D7CCV5acd/XXYuzjOlAlpdhNOeEfnJTCY+wU9bCFOz4G7gMW7u086ZGpEk2QMxpZ45izxpEj0qFG55i7siuV2sTVovIR8AmKQ3Pc+2HOpVCHR/22e1WYCszf2dHDeFWipwCJ9IlEJ6J6Ohui3ZVtWgKOCsZwH69Fz2ok67cCm+9jnH0KRK0dDZPYeVqzZN4OXntGSmKo+AkrdyW7KJMa6YctY83nc+VLOWqwfMImU1D3Hus="
+
+
+  file: coverage-result.tar.gz
+  file_glob: true
+  overwrite: true
+  skip_cleanup: true
+  on:
+    tags: true
